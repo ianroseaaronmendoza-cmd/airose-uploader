@@ -10,6 +10,7 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.runtime/
 
 # Local secrets and tokens
 /credentials.json
@@ -18,6 +19,7 @@ venv/
 /tiktok_credentials.json
 /tiktok_token.json
 /airoseuploader-5d291fd8c0f5.json
+/google_service_account.json
 /.env
 
 # Logs

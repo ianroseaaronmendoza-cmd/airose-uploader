@@ -13,8 +13,8 @@ on:
         type: boolean
         default: false
   schedule:
-    # Adjust this cron as needed.
-    - cron: "0 */6 * * *"
+    # GitHub Actions cron uses UTC. 12:00 UTC = 8:00 PM Asia/Singapore (UTC+8).
+    - cron: "0 12 * * *"
 
 permissions:
   contents: write
@@ -25,6 +25,9 @@ jobs:
     env:
       UPLOADER_METADATA_FOLDER: ${{ vars.UPLOADER_METADATA_FOLDER }}
       UPLOADER_VIDEO_FOLDER: ${{ vars.UPLOADER_VIDEO_FOLDER }}
+      GOOGLE_DRIVE_METADATA_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_METADATA_FOLDER_URL }}
+      GOOGLE_DRIVE_VIDEO_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_VIDEO_FOLDER_URL }}
+      DRIVE_SERVICE_ACCOUNT_PATH: google_service_account.json
       DEFAULT_PLATFORMS: youtube,igfb
     steps:
       - name: Checkout
@@ -47,6 +50,7 @@ jobs:
           YOUTUBE_CREDENTIALS_JSON_B64: ${{ secrets.YOUTUBE_CREDENTIALS_JSON_B64 }}
           YOUTUBE_TOKEN_PKL_B64: ${{ secrets.YOUTUBE_TOKEN_PKL_B64 }}
           META_CREDENTIALS_JSON_B64: ${{ secrets.META_CREDENTIALS_JSON_B64 }}
+          GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
         run: |
           python - <<'PY'
           import base64
@@ -57,6 +61,9 @@ jobs:
               "YOUTUBE_CREDENTIALS_JSON_B64": "credentials.json",
               "YOUTUBE_TOKEN_PKL_B64": "token.pkl",
               "META_CREDENTIALS_JSON_B64": "meta_credentials.json",
+          }
+          optional_mappings = {
+              "GOOGLE_SERVICE_ACCOUNT_JSON_B64": "google_service_account.json",
           }
 
           missing = [key for key in mappings if not os.environ.get(key)]
@@ -69,7 +76,70 @@ jobs:
               raw = base64.b64decode(os.environ[env_key])
               Path(file_path).write_bytes(raw)
               print(f"Wrote {file_path}")
+
+          for env_key, file_path in optional_mappings.items():
+              value = os.environ.get(env_key)
+              if not value:
+                  continue
+              raw = base64.b64decode(value)
+              Path(file_path).write_bytes(raw)
+              print(f"Wrote {file_path}")
           PY
+
+      - name: Normalize Drive Config
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          meta_path = Path("meta_credentials.json")
+          service_account_path = Path("google_service_account.json")
+          if not meta_path.exists() or not service_account_path.exists():
+              raise SystemExit(0)
+
+          data = json.loads(meta_path.read_text(encoding="utf-8"))
+          desired = service_account_path.name
+          if data.get("google_service_account_json") == desired:
+              raise SystemExit(0)
+
+          data["google_service_account_json"] = desired
+          meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+          print("Updated meta_credentials.json to use google_service_account.json")
+          PY
+
+      - name: Sync Google Drive Folders
+        if: ${{ env.GOOGLE_DRIVE_METADATA_FOLDER_URL != '' || env.GOOGLE_DRIVE_VIDEO_FOLDER_URL != '' }}
+        shell: bash
+        run: |
+          if [ ! -f "$DRIVE_SERVICE_ACCOUNT_PATH" ]; then
+            echo "GOOGLE_SERVICE_ACCOUNT_JSON_B64 secret is required for Google Drive folder sync."
+            exit 1
+          fi
+
+          if [ -n "$GOOGLE_DRIVE_METADATA_FOLDER_URL" ]; then
+            METADATA_DIR="$GITHUB_WORKSPACE/.runtime/metadata"
+            mkdir -p "$METADATA_DIR"
+            python drive_folder_sync.py pull \
+              --folder-url "$GOOGLE_DRIVE_METADATA_FOLDER_URL" \
+              --dest "$METADATA_DIR" \
+              --service-account-json "$DRIVE_SERVICE_ACCOUNT_PATH" \
+              --extensions .json \
+              --clear-dest
+            echo "UPLOADER_METADATA_FOLDER=$METADATA_DIR" >> "$GITHUB_ENV"
+          fi
+
+          if [ -n "$GOOGLE_DRIVE_VIDEO_FOLDER_URL" ]; then
+            VIDEO_DIR="$GITHUB_WORKSPACE/.runtime/videos"
+            mkdir -p "$VIDEO_DIR"
+            python drive_folder_sync.py pull \
+              --folder-url "$GOOGLE_DRIVE_VIDEO_FOLDER_URL" \
+              --dest "$VIDEO_DIR" \
+              --service-account-json "$DRIVE_SERVICE_ACCOUNT_PATH" \
+              --extensions .mp4,.mov,.m4v \
+              --clear-dest
+            echo "UPLOADER_VIDEO_FOLDER=$VIDEO_DIR" >> "$GITHUB_ENV"
+          fi
 
       - name: Run Headless Upload
         shell: bash
@@ -88,8 +158,23 @@ jobs:
 
           python cron_headless_upload.py --platforms "$PLATFORMS_INPUT" $EXTRA_ARGS
 
+      - name: Push Metadata Updates to Google Drive
+        if: ${{ github.event.inputs.dry_run != 'true' && env.GOOGLE_DRIVE_METADATA_FOLDER_URL != '' }}
+        shell: bash
+        run: |
+          if [ -z "$UPLOADER_METADATA_FOLDER" ] || [ ! -d "$UPLOADER_METADATA_FOLDER" ]; then
+            echo "Resolved metadata folder missing: $UPLOADER_METADATA_FOLDER"
+            exit 1
+          fi
+
+          python drive_folder_sync.py push \
+            --folder-url "$GOOGLE_DRIVE_METADATA_FOLDER_URL" \
+            --src "$UPLOADER_METADATA_FOLDER" \
+            --service-account-json "$DRIVE_SERVICE_ACCOUNT_PATH" \
+            --extensions .json
+
       - name: Commit Metadata Updates
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ github.event.inputs.dry_run != 'true' && env.GOOGLE_DRIVE_METADATA_FOLDER_URL == '' }}
         shell: bash
         run: |
           if [ -z "$UPLOADER_METADATA_FOLDER" ]; then

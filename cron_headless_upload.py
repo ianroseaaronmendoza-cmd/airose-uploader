@@ -303,9 +303,10 @@ def main() -> int:
                 print("  YouTube: already uploaded")
             else:
                 source_video_url = _get_public_video_url(data)
-                if not source_video_url:
+                local_video_exists = bool(asset.video_path) and os.path.isfile(asset.video_path)
+                if not source_video_url and not local_video_exists:
                     message = (
-                        "YouTube upload requires one of: "
+                        "YouTube upload requires a synced local video file or one of: "
                         "youtube_video_url/public_video_url/instagram_video_url/google_drive_link/google_drive_url"
                     )
                     totals["errors"] += 1
@@ -316,7 +317,10 @@ def main() -> int:
                     if args.fail_fast:
                         stop_now = True
                 elif args.dry_run:
-                    print(f"  YouTube: would upload from {source_video_url}")
+                    if source_video_url:
+                        print(f"  YouTube: would upload from {source_video_url}")
+                    else:
+                        print(f"  YouTube: would upload local file {asset.video_path}")
                 else:
                     try:
                         youtube_title = build_youtube_title_with_hashtags(title, description)
