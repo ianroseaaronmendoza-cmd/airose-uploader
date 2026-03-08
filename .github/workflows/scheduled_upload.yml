@@ -13,8 +13,9 @@ on:
         type: boolean
         default: false
   schedule:
-    # GitHub Actions cron uses UTC. 12:00 UTC = 8:00 PM Asia/Singapore (UTC+8).
-    - cron: "0 12 * * *"
+    # GitHub Actions cron uses UTC. 00:00 UTC = 8:00 AM Asia/Singapore (UTC+8),
+    # and 12:00 UTC = 8:00 PM Asia/Singapore.
+    - cron: "0 0,12 * * *"
 
 permissions:
   contents: write

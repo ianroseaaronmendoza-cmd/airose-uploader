@@ -61,7 +61,7 @@ Workflow file:
 
 It supports:
 
-- Scheduled run (daily at 8:00 PM Asia/Singapore, which is 12:00 UTC)
+- Scheduled run (daily at 8:00 AM and 8:00 PM Asia/Singapore, which is 00:00 UTC and 12:00 UTC)
 - Manual run (`workflow_dispatch`) with optional:
   - `platforms` (default: `youtube,igfb`)
   - `dry_run` (`true/false`)
