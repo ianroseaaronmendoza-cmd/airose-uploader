@@ -29,6 +29,11 @@ Add these as repository secrets:
 - `META_CREDENTIALS_JSON_B64`
 - `GOOGLE_SERVICE_ACCOUNT_JSON_B64` (required when syncing metadata/video folders from Google Drive)
 
+Notes:
+
+- `YOUTUBE_TOKEN_PKL_B64` must be the full single-line base64 value.
+- The JSON-based secrets can be stored either as the full single-line base64 value or as raw JSON text.
+
 ## 3. Set GitHub Variables
 
 Repository Variables used by workflow:

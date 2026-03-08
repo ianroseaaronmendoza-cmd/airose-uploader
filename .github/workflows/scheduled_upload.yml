@@ -54,34 +54,64 @@ jobs:
         run: |
           python - <<'PY'
           import base64
+          import binascii
+          import json
           import os
           from pathlib import Path
 
           mappings = {
-              "YOUTUBE_CREDENTIALS_JSON_B64": "credentials.json",
-              "YOUTUBE_TOKEN_PKL_B64": "token.pkl",
-              "META_CREDENTIALS_JSON_B64": "meta_credentials.json",
+              "YOUTUBE_CREDENTIALS_JSON_B64": ("credentials.json", "json"),
+              "YOUTUBE_TOKEN_PKL_B64": ("token.pkl", "binary"),
+              "META_CREDENTIALS_JSON_B64": ("meta_credentials.json", "json"),
           }
           optional_mappings = {
-              "GOOGLE_SERVICE_ACCOUNT_JSON_B64": "google_service_account.json",
+              "GOOGLE_SERVICE_ACCOUNT_JSON_B64": ("google_service_account.json", "json"),
           }
 
-          missing = [key for key in mappings if not os.environ.get(key)]
+          def decode_secret(env_key: str, value_kind: str) -> bytes | None:
+              value = (os.environ.get(env_key) or "").strip()
+              if not value:
+                  return None
+
+              if value_kind == "json" and value[:1] in "{[":
+                  try:
+                      json.loads(value)
+                  except json.JSONDecodeError as exc:
+                      raise SystemExit(
+                          f"GitHub Secret {env_key} looks like raw JSON but is invalid: {exc}"
+                      ) from exc
+                  return value.encode("utf-8")
+
+              try:
+                  return base64.b64decode(value, validate=True)
+              except binascii.Error as exc:
+                  if value_kind == "json":
+                      raise SystemExit(
+                          f"GitHub Secret {env_key} is invalid. "
+                          "Provide either raw JSON text or the full single-line base64 value."
+                      ) from exc
+                  raise SystemExit(
+                      f"GitHub Secret {env_key} is invalid base64. "
+                      "Recreate it from the original file bytes and paste the full single-line value."
+                  ) from exc
+
+          missing = [key for key in mappings if not (os.environ.get(key) or "").strip()]
           if missing:
               raise SystemExit(
                   "Missing required GitHub Secrets: " + ", ".join(sorted(missing))
               )
 
-          for env_key, file_path in mappings.items():
-              raw = base64.b64decode(os.environ[env_key])
+          for env_key, (file_path, value_kind) in mappings.items():
+              raw = decode_secret(env_key, value_kind)
+              if raw is None:
+                  raise SystemExit(f"Missing required GitHub Secret: {env_key}")
               Path(file_path).write_bytes(raw)
               print(f"Wrote {file_path}")
 
-          for env_key, file_path in optional_mappings.items():
-              value = os.environ.get(env_key)
-              if not value:
+          for env_key, (file_path, value_kind) in optional_mappings.items():
+              raw = decode_secret(env_key, value_kind)
+              if raw is None:
                   continue
-              raw = base64.b64decode(value)
               Path(file_path).write_bytes(raw)
               print(f"Wrote {file_path}")
           PY
