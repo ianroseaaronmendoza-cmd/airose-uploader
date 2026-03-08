@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local secrets and tokens
+/credentials.json
+/token.pkl
+/meta_credentials.json
+/tiktok_credentials.json
+/tiktok_token.json
+/airoseuploader-5d291fd8c0f5.json
+/.env
+
+# Logs
+*.log

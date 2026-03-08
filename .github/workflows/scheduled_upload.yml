@@ -1,0 +1,119 @@
+name: Scheduled Upload (Headless)
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Comma-separated platforms (youtube,igfb)"
+        required: false
+        default: "youtube,igfb"
+      dry_run:
+        description: "Run without uploading or writing metadata"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # Adjust this cron as needed.
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    env:
+      UPLOADER_METADATA_FOLDER: ${{ vars.UPLOADER_METADATA_FOLDER }}
+      UPLOADER_VIDEO_FOLDER: ${{ vars.UPLOADER_VIDEO_FOLDER }}
+      DEFAULT_PLATFORMS: youtube,igfb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-headless.txt
+
+      - name: Materialize Auth Files
+        env:
+          YOUTUBE_CREDENTIALS_JSON_B64: ${{ secrets.YOUTUBE_CREDENTIALS_JSON_B64 }}
+          YOUTUBE_TOKEN_PKL_B64: ${{ secrets.YOUTUBE_TOKEN_PKL_B64 }}
+          META_CREDENTIALS_JSON_B64: ${{ secrets.META_CREDENTIALS_JSON_B64 }}
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          mappings = {
+              "YOUTUBE_CREDENTIALS_JSON_B64": "credentials.json",
+              "YOUTUBE_TOKEN_PKL_B64": "token.pkl",
+              "META_CREDENTIALS_JSON_B64": "meta_credentials.json",
+          }
+
+          missing = [key for key in mappings if not os.environ.get(key)]
+          if missing:
+              raise SystemExit(
+                  "Missing required GitHub Secrets: " + ", ".join(sorted(missing))
+              )
+
+          for env_key, file_path in mappings.items():
+              raw = base64.b64decode(os.environ[env_key])
+              Path(file_path).write_bytes(raw)
+              print(f"Wrote {file_path}")
+          PY
+
+      - name: Run Headless Upload
+        shell: bash
+        run: |
+          PLATFORMS_INPUT="${{ github.event.inputs.platforms }}"
+          DRY_RUN_INPUT="${{ github.event.inputs.dry_run }}"
+
+          if [ -z "$PLATFORMS_INPUT" ]; then
+            PLATFORMS_INPUT="$DEFAULT_PLATFORMS"
+          fi
+
+          EXTRA_ARGS=""
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+
+          python cron_headless_upload.py --platforms "$PLATFORMS_INPUT" $EXTRA_ARGS
+
+      - name: Commit Metadata Updates
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          if [ -z "$UPLOADER_METADATA_FOLDER" ]; then
+            echo "UPLOADER_METADATA_FOLDER is not set; skipping commit."
+            exit 0
+          fi
+
+          META_DIR="$UPLOADER_METADATA_FOLDER"
+          if [[ "$META_DIR" = "$GITHUB_WORKSPACE"* ]]; then
+            META_DIR="${META_DIR#$GITHUB_WORKSPACE/}"
+          fi
+
+          if [ ! -d "$META_DIR" ]; then
+            echo "Metadata directory does not exist in workspace: $META_DIR"
+            exit 0
+          fi
+
+          git add "$META_DIR"
+          if git diff --cached --quiet; then
+            echo "No metadata changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update upload status [skip ci]"
+          git push
