@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.assets = []
         self.current_asset = None
         self._approve_checkboxes: list[QCheckBox] = []
+        self.show_only_available = False  # filter state
 
         self._build_ui()
         self.refresh_data()
@@ -61,11 +62,24 @@ class MainWindow(QMainWindow):
         dash = QHBoxLayout()
         self.dashboard_label = QLabel()
         self.dashboard_label.setFont(QFont("Segoe UI", 9))
+        
+        # Filter checkbox
+        self.filter_checkbox = QCheckBox("Show only available")
+        self.filter_checkbox.setFont(QFont("Segoe UI", 9))
+        self.filter_checkbox.stateChanged.connect(self.refresh_data)
+        
+        # Preset counters
+        self.preset_label = QLabel()
+        self.preset_label.setFont(QFont("Segoe UI", 9))
+        
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setFixedWidth(90)
         refresh_btn.clicked.connect(self.refresh_data)
+        
         dash.addWidget(self.dashboard_label)
         dash.addStretch()
+        dash.addWidget(self.preset_label)
+        dash.addWidget(self.filter_checkbox)
         dash.addWidget(refresh_btn)
         root.addLayout(dash)
 
@@ -131,9 +145,26 @@ class MainWindow(QMainWindow):
 
     # ================= DATA =================
 
+    def _compute_preset_stats(self) -> dict:
+        """Compute counts for each preset type."""
+        preset_counts = {"faith": 0, "love": 0, "sentimental": 0, "neutral": 0}
+        
+        for asset in self.assets:
+            try:
+                with open(asset.metadata_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    preset = data.get("preset", "").strip().lower()
+                    if preset in preset_counts:
+                        preset_counts[preset] += 1
+            except (FileNotFoundError, json.JSONDecodeError):
+                continue
+        
+        return preset_counts
+
     def refresh_data(self):
         self.assets = load_metadata()
         stats = compute_stats(self.assets)
+        preset_stats = self._compute_preset_stats()
 
         self.dashboard_label.setText(
             f"Total: {stats['total']} | "
@@ -144,13 +175,20 @@ class MainWindow(QMainWindow):
             f"IG Uploaded: {stats['ig_uploaded']}"
         )
 
+        self.preset_label.setText(
+            f"Faith: {preset_stats['faith']} | "
+            f"Love: {preset_stats['love']} | "
+            f"Sentimental: {preset_stats['sentimental']} | "
+            f"Neutral: {preset_stats['neutral']}"
+        )
+
         self.populate_table()
 
     # helper: centered checkbox widget for a table cell
-    def _make_centered_checkbox(self, checked: bool, row: int) -> QWidget:
+    def _make_centered_checkbox(self, checked: bool, asset) -> QWidget:
         cb = QCheckBox()
         cb.setChecked(checked)
-        cb.stateChanged.connect(lambda _state, r=row: self._on_approve_toggled(r))
+        cb.stateChanged.connect(lambda _state, a=asset: self._on_approve_toggled(a))
         container = QWidget()
         lay = QHBoxLayout(container)
         lay.addWidget(cb)
@@ -158,22 +196,27 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         return container
 
-    def _on_approve_toggled(self, row: int):
-        """When a row's Approved checkbox changes, update upload button if it's the selected row."""
-        if self.current_asset and row < len(self.assets) and self.assets[row] is self.current_asset:
+    def _on_approve_toggled(self, asset):
+        """When an asset's Approved checkbox changes, update upload button if it's the selected asset."""
+        if self.current_asset and asset is self.current_asset:
             self.update_upload_button_state()
 
-    def _get_row_approved(self, row: int) -> bool:
-        """Read the Approved checkbox state for a table row."""
-        widget = self.table.cellWidget(row, 4)
-        if widget:
-            cb = widget.findChild(QCheckBox)
-            if cb:
-                return cb.isChecked()
-        return False
-
     def populate_table(self):
-        self.table.setRowCount(len(self.assets))
+        # Filter assets based on checkbox state
+        if self.filter_checkbox.isChecked():
+            # Show only available: approved but not uploaded to YouTube
+            filtered_assets = []
+            for asset in self.assets:
+                yt_status = asset.upload_status.get("youtube", {})
+                approved = yt_status.get("approved", False)
+                uploaded = yt_status.get("uploaded", False)
+                if approved and not uploaded:
+                    filtered_assets.append(asset)
+            display_assets = filtered_assets
+        else:
+            display_assets = self.assets
+
+        self.table.setRowCount(len(display_assets))
 
         # Column sizing: stretch ID, fit the rest
         header = self.table.horizontalHeader()
@@ -182,7 +225,7 @@ class MainWindow(QMainWindow):
         for col in range(1, self.table.columnCount()):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
-        for row, asset in enumerate(self.assets):
+        for row, asset in enumerate(display_assets):
             self.table.setItem(row, 0, QTableWidgetItem(asset.id))
             self.table.setItem(row, 1, QTableWidgetItem(asset.production_mode))
             self.table.setItem(row, 2, QTableWidgetItem(f"{asset.duration:.1f}s"))
@@ -195,7 +238,7 @@ class MainWindow(QMainWindow):
             # Approved checkbox (col 4)
             yt_status = asset.upload_status.get("youtube", {})
             approved = yt_status.get("approved", False)
-            self.table.setCellWidget(row, 4, self._make_centered_checkbox(approved, row))
+            self.table.setCellWidget(row, 4, self._make_centered_checkbox(approved, asset))
 
             # YouTube upload status (col 5)
             uploaded = yt_status.get("uploaded", False)
@@ -223,7 +266,24 @@ class MainWindow(QMainWindow):
     # ================= INSPECTOR =================
 
     def load_inspector(self, row, _):
-        asset = self.assets[row]
+        # Get the asset from the filtered display list
+        if self.filter_checkbox.isChecked():
+            filtered_assets = []
+            for asset in self.assets:
+                yt_status = asset.upload_status.get("youtube", {})
+                approved = yt_status.get("approved", False)
+                uploaded = yt_status.get("uploaded", False)
+                if approved and not uploaded:
+                    filtered_assets.append(asset)
+            if row < len(filtered_assets):
+                asset = filtered_assets[row]
+            else:
+                return
+        else:
+            if row >= len(self.assets):
+                return
+            asset = self.assets[row]
+        
         self.current_asset = asset
         self._current_row = row
 
@@ -252,10 +312,8 @@ class MainWindow(QMainWindow):
         self.title_edit.setText(normalized_title)
         self.desc_edit.setText(normalized_description)
 
-        # Read approved state from in-row checkbox
-        row = self._current_row if hasattr(self, "_current_row") else None
-        if row is not None:
-            data.setdefault("upload_status", {}).setdefault("youtube", {})["approved"] = self._get_row_approved(row)
+        # The approved state is already stored in the asset's upload_status
+        # No need to read from checkbox since it's already updated via _on_approve_toggled
 
         with open(self.current_asset.metadata_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
@@ -282,7 +340,8 @@ class MainWindow(QMainWindow):
             return
 
         row = self._current_row if hasattr(self, "_current_row") else None
-        approved = self._get_row_approved(row) if row is not None else False
+        yt_status = self.current_asset.upload_status.get("youtube", {})
+        approved = yt_status.get("approved", False)
         has_video = self.current_asset.video_exists
 
         # YouTube
