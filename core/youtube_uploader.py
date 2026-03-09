@@ -145,7 +145,7 @@ def upload_video(
                 "categoryId": "22"  # People & Blogs
             },
             "status": {
-                "privacyStatus": "private",  # SAFE MODE
+                "privacyStatus": "public",  # SAFE MODE
                 "selfDeclaredMadeForKids": False
             }
         }

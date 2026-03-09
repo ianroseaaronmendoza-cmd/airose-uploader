@@ -65,6 +65,7 @@ It supports:
 - Manual run (`workflow_dispatch`) with optional:
   - `platforms` (default: `youtube,igfb`)
   - `dry_run` (`true/false`)
+- Each run picks exactly one approved asset at random and uses that same asset for the selected platforms in that run.
 
 Drive-backed mode:
 
@@ -77,6 +78,7 @@ Drive-backed mode:
 An asset is processed only when:
 
 - `upload_status.youtube.approved == true`
+- It still has pending work for at least one selected platform.
 
 Source video URL can come from any of:
 

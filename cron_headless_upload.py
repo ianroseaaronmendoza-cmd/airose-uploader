@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import random
 import re
 import tempfile
 from datetime import datetime
@@ -69,6 +70,29 @@ def _is_approved_for_upload(data: dict) -> bool:
         .get("youtube", {})
         .get("approved", False)
     )
+
+
+def _needs_youtube_upload(data: dict) -> bool:
+    return not bool(
+        data.get("upload_status", {})
+        .get("youtube", {})
+        .get("uploaded", False)
+    )
+
+
+def _needs_igfb_upload(data: dict) -> bool:
+    igfb_status = data.get("upload_status", {}).get("instagram_facebook", {})
+    has_facebook = bool(igfb_status.get("facebook_video_id"))
+    has_instagram = bool(igfb_status.get("instagram_media_id"))
+    return not (has_facebook and has_instagram)
+
+
+def _has_pending_selected_platforms(data: dict, selected_platforms: set[str]) -> bool:
+    if "youtube" in selected_platforms and _needs_youtube_upload(data):
+        return True
+    if "igfb" in selected_platforms and _needs_igfb_upload(data):
+        return True
+    return False
 
 
 def _extract_google_drive_file_id(url: str) -> str | None:
@@ -200,10 +224,30 @@ def _parse_platforms(value: str) -> set[str]:
     return parts or {"youtube", "igfb"}
 
 
-def _parse_ids(value: str | None) -> set[str]:
-    if not value:
-        return set()
-    return {item.strip() for item in value.split(",") if item.strip()}
+def _get_preset_for_current_time() -> str:
+    """Return the preset to use based on the current scheduled time."""
+    from datetime import datetime
+    now = datetime.utcnow()
+    hour = now.hour
+    minute = now.minute
+    
+    # Map scheduled times to presets
+    if hour == 0 and minute < 9:  # 00:00-00:08
+        return "faith"
+    elif hour == 6 and minute >= 9:  # 06:09+
+        return "love"
+    elif hour == 12 and minute >= 18:  # 12:18+
+        return "sentimental"
+    elif hour == 18 and minute >= 27:  # 18:27+
+        return "neutral"
+    elif hour < 6:  # 00:09-05:59
+        return "faith"
+    elif hour < 12:  # 06:00-11:59
+        return "love"
+    elif hour < 18:  # 12:00-17:59
+        return "sentimental"
+    else:  # 18:00-23:59
+        return "neutral"
 
 
 def main() -> int:
@@ -246,6 +290,11 @@ def main() -> int:
         action="store_true",
         help="Stop at the first upload error.",
     )
+    parser.add_argument(
+        "--random-one",
+        action="store_true",
+        help="Pick exactly one approved asset at random from the filtered pool.",
+    )
     args = parser.parse_args()
 
     selected_platforms = _parse_platforms(args.platforms)
@@ -263,6 +312,39 @@ def main() -> int:
         assets = [asset for asset in assets if asset.id in selected_ids]
     if args.limit > 0:
         assets = assets[:args.limit]
+    if args.random_one:
+        target_preset = _get_preset_for_current_time()
+        print(f"Target preset for this run: {target_preset}")
+        
+        candidate_assets = []
+        for asset in assets:
+            if asset.error_state:
+                continue
+            if not _is_approved_for_upload({"upload_status": asset.upload_status}):
+                continue
+            if not _has_pending_selected_platforms(
+                {"upload_status": asset.upload_status},
+                selected_platforms,
+            ):
+                continue
+            
+            # Load metadata to check preset
+            try:
+                data = _load_json(asset.metadata_path)
+                asset_preset = data.get("preset", "").strip().lower()
+                if asset_preset == target_preset.lower():
+                    candidate_assets.append(asset)
+            except Exception:
+                continue
+        
+        print(f"Random selection candidates with preset '{target_preset}': {len(candidate_assets)}")
+        if candidate_assets:
+            selected_asset = random.SystemRandom().choice(candidate_assets)
+            print(f"Randomly selected asset: {selected_asset.id}")
+            assets = [selected_asset]
+        else:
+            print(f"Random selection skipped: no approved assets with preset '{target_preset}' pending selected platforms.")
+            assets = []
 
     totals = {
         "assets_seen": len(assets),
