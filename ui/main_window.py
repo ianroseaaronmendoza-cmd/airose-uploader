@@ -192,7 +192,9 @@ class MainWindow(QMainWindow):
     # helper: centered checkbox widget for a table cell
     def _make_centered_checkbox(self, checked: bool, asset) -> QWidget:
         cb = QCheckBox()
+        cb.blockSignals(True)  # Block signals while setting initial state
         cb.setChecked(checked)
+        cb.blockSignals(False)  # Re-enable signals
         cb.stateChanged.connect(lambda _state, a=asset, c=cb: self._on_approve_toggled(a, c))
         container = QWidget()
         lay = QHBoxLayout(container)
@@ -219,8 +221,22 @@ class MainWindow(QMainWindow):
             print(f"Error saving approved status: {e}")
             return
         
-        # Reload data to refresh the display
-        self.refresh_data()
+        # Reload data and refresh display
+        self.assets = load_metadata()
+        self.populate_table()
+        
+        # Clear inspector if current asset would be filtered out
+        if self.current_asset and self.current_asset.id == asset.id:
+            # Check if the asset would be visible in current filter
+            yt_status = asset.upload_status.get("youtube", {})
+            approved = yt_status.get("approved", False)
+            
+            # If "Hide approved" is checked and asset is now approved, clear inspector
+            if self.filter_unapproved.isChecked() and approved:
+                self.title_edit.setText("")
+                self.desc_edit.setText("")
+                self.current_asset = None
+                self.update_upload_button_state()
 
     def populate_table(self):
         # Filter assets based on checkbox states

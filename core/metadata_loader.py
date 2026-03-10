@@ -223,6 +223,10 @@ def style_description_text(description: str) -> str:
 
     # Capitalize standalone "i" pronoun.
     lowered = re.sub(r"\bi\b", "I", lowered)
+    
+    # Capitalize "god"
+    lowered = re.sub(r"\bgod\b", "God", lowered)
+    
     return _restore_urls(lowered, url_map).strip()
 
 
