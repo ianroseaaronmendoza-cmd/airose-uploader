@@ -37,8 +37,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Airose Uploader - Phase 1")
-        self.resize(520, 540)
-        self.setMinimumSize(440, 420)
+        self.resize(1100, 800)
+        self.setMinimumSize(700, 600)
         self.setStyleSheet(_STYLESHEET)
 
         self.assets = []
@@ -63,10 +63,14 @@ class MainWindow(QMainWindow):
         self.dashboard_label = QLabel()
         self.dashboard_label.setFont(QFont("Segoe UI", 9))
         
-        # Filter checkbox
-        self.filter_checkbox = QCheckBox("Show only available")
-        self.filter_checkbox.setFont(QFont("Segoe UI", 9))
-        self.filter_checkbox.stateChanged.connect(self.refresh_data)
+        # Filter checkboxes
+        self.filter_unapproved = QCheckBox("Hide approved")
+        self.filter_unapproved.setFont(QFont("Segoe UI", 9))
+        self.filter_unapproved.stateChanged.connect(self.refresh_data)
+        
+        self.filter_uploaded = QCheckBox("Hide uploaded")
+        self.filter_uploaded.setFont(QFont("Segoe UI", 9))
+        self.filter_uploaded.stateChanged.connect(self.refresh_data)
         
         # Preset counters
         self.preset_label = QLabel()
@@ -79,7 +83,8 @@ class MainWindow(QMainWindow):
         dash.addWidget(self.dashboard_label)
         dash.addStretch()
         dash.addWidget(self.preset_label)
-        dash.addWidget(self.filter_checkbox)
+        dash.addWidget(self.filter_unapproved)
+        dash.addWidget(self.filter_uploaded)
         dash.addWidget(refresh_btn)
         root.addLayout(dash)
 
@@ -188,7 +193,7 @@ class MainWindow(QMainWindow):
     def _make_centered_checkbox(self, checked: bool, asset) -> QWidget:
         cb = QCheckBox()
         cb.setChecked(checked)
-        cb.stateChanged.connect(lambda _state, a=asset: self._on_approve_toggled(a))
+        cb.stateChanged.connect(lambda _state, a=asset, c=cb: self._on_approve_toggled(a, c))
         container = QWidget()
         lay = QHBoxLayout(container)
         lay.addWidget(cb)
@@ -196,25 +201,52 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         return container
 
-    def _on_approve_toggled(self, asset):
-        """When an asset's Approved checkbox changes, update upload button if it's the selected asset."""
-        if self.current_asset and asset is self.current_asset:
-            self.update_upload_button_state()
+    def _on_approve_toggled(self, asset, checkbox):
+        """When an asset's Approved checkbox changes, save the status and refresh."""
+        new_approved_state = checkbox.isChecked()
+        
+        # Update metadata file
+        try:
+            with open(asset.metadata_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            yt_status = data.setdefault("upload_status", {}).setdefault("youtube", {})
+            yt_status["approved"] = new_approved_state
+            
+            with open(asset.metadata_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Error saving approved status: {e}")
+            return
+        
+        # Reload data to refresh the display
+        self.refresh_data()
 
     def populate_table(self):
-        # Filter assets based on checkbox state
-        if self.filter_checkbox.isChecked():
-            # Show only available: approved but not uploaded to YouTube
-            filtered_assets = []
-            for asset in self.assets:
-                yt_status = asset.upload_status.get("youtube", {})
-                approved = yt_status.get("approved", False)
-                uploaded = yt_status.get("uploaded", False)
-                if approved and not uploaded:
-                    filtered_assets.append(asset)
-            display_assets = filtered_assets
-        else:
-            display_assets = self.assets
+        # Filter assets based on checkbox states
+        display_assets = []
+        for asset in self.assets:
+            yt_status = asset.upload_status.get("youtube", {})
+            tt_status = asset.upload_status.get("tiktok", {})
+            igfb_status = asset.upload_status.get("instagram_facebook", {})
+            
+            approved = yt_status.get("approved", False)
+            yt_uploaded = yt_status.get("uploaded", False)
+            tt_uploaded = tt_status.get("uploaded", False)
+            ig_uploaded = bool(igfb_status.get("instagram_media_id"))
+            fb_uploaded = bool(igfb_status.get("facebook_video_id"))
+            
+            any_uploaded = yt_uploaded or tt_uploaded or ig_uploaded or fb_uploaded
+            
+            # Apply hide approved filter
+            if self.filter_unapproved.isChecked() and approved:
+                continue
+            
+            # Apply hide uploaded filter
+            if self.filter_uploaded.isChecked() and any_uploaded:
+                continue
+            
+            display_assets.append(asset)
 
         self.table.setRowCount(len(display_assets))
 
@@ -267,22 +299,33 @@ class MainWindow(QMainWindow):
 
     def load_inspector(self, row, _):
         # Get the asset from the filtered display list
-        if self.filter_checkbox.isChecked():
-            filtered_assets = []
-            for asset in self.assets:
-                yt_status = asset.upload_status.get("youtube", {})
-                approved = yt_status.get("approved", False)
-                uploaded = yt_status.get("uploaded", False)
-                if approved and not uploaded:
-                    filtered_assets.append(asset)
-            if row < len(filtered_assets):
-                asset = filtered_assets[row]
-            else:
-                return
-        else:
-            if row >= len(self.assets):
-                return
-            asset = self.assets[row]
+        filtered_assets = []
+        for asset in self.assets:
+            yt_status = asset.upload_status.get("youtube", {})
+            tt_status = asset.upload_status.get("tiktok", {})
+            igfb_status = asset.upload_status.get("instagram_facebook", {})
+            
+            approved = yt_status.get("approved", False)
+            yt_uploaded = yt_status.get("uploaded", False)
+            tt_uploaded = tt_status.get("uploaded", False)
+            ig_uploaded = bool(igfb_status.get("instagram_media_id"))
+            fb_uploaded = bool(igfb_status.get("facebook_video_id"))
+            
+            any_uploaded = yt_uploaded or tt_uploaded or ig_uploaded or fb_uploaded
+            
+            # Apply hide approved filter
+            if self.filter_unapproved.isChecked() and approved:
+                continue
+            
+            # Apply hide uploaded filter
+            if self.filter_uploaded.isChecked() and any_uploaded:
+                continue
+            
+            filtered_assets.append(asset)
+        
+        if row >= len(filtered_assets):
+            return
+        asset = filtered_assets[row]
         
         self.current_asset = asset
         self._current_row = row

@@ -224,6 +224,11 @@ def _parse_platforms(value: str) -> set[str]:
     return parts or {"youtube", "igfb"}
 
 
+def _parse_ids(value: str) -> set[str]:
+    """Parse comma-separated asset IDs. Returns empty set if value is empty."""
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
 def _get_preset_for_current_time() -> str:
     """Return the preset to use based on the current scheduled time."""
     from datetime import datetime
