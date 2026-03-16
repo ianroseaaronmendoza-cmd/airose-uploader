@@ -1,3 +1,4 @@
+import argparse
 from datetime import timezone
 
 from core.youtube_auth import TOKEN_PATH, refresh_saved_youtube_token
@@ -14,7 +15,20 @@ def _format_expiry(expiry) -> str:
 
 
 def main() -> None:
-    creds = refresh_saved_youtube_token(force_refresh=True)
+    parser = argparse.ArgumentParser(
+        description="Refresh saved YouTube credentials and report token status."
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Do not fall back to browser-based OAuth if refresh is not possible.",
+    )
+    args = parser.parse_args()
+
+    creds = refresh_saved_youtube_token(
+        force_refresh=True,
+        allow_interactive=not args.no_interactive,
+    )
 
     print("YouTube token refresh successful.")
     print(f"Token file: {TOKEN_PATH}")

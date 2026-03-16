@@ -189,7 +189,7 @@ jobs:
           fi
 
           if [[ ",$PLATFORMS_INPUT," == *",youtube,"* ]]; then
-            python refresh_youtube_token.py
+            python refresh_youtube_token.py --no-interactive
           else
             echo "YouTube not selected; skipping token refresh."
           fi

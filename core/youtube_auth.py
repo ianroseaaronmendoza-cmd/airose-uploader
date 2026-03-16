@@ -85,8 +85,14 @@ def get_youtube_credentials(
     return creds
 
 
-def refresh_saved_youtube_token(force_refresh: bool = True) -> Credentials:
-    return get_youtube_credentials(force_refresh=force_refresh, allow_interactive=True)
+def refresh_saved_youtube_token(
+    force_refresh: bool = True,
+    allow_interactive: bool = True,
+) -> Credentials:
+    return get_youtube_credentials(
+        force_refresh=force_refresh,
+        allow_interactive=allow_interactive,
+    )
 
 
 def get_authenticated_service(
