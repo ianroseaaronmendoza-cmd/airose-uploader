@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Comma-separated platforms (youtube,igfb)"
+        description: "Comma-separated platforms (youtube,igfb,pinterest)"
         required: false
         default: "youtube,igfb"
       dry_run:
@@ -177,6 +177,36 @@ jobs:
               --extensions .mp4,.mov,.m4v \
               --clear-dest
             echo "UPLOADER_VIDEO_FOLDER=$VIDEO_DIR" >> "$GITHUB_ENV"
+          fi
+
+      - name: Refresh YouTube Token
+        shell: bash
+        run: |
+          PLATFORMS_INPUT="${{ github.event.inputs.platforms }}"
+
+          if [ -z "$PLATFORMS_INPUT" ]; then
+            PLATFORMS_INPUT="$DEFAULT_PLATFORMS"
+          fi
+
+          if [[ ",$PLATFORMS_INPUT," == *",youtube,"* ]]; then
+            python refresh_youtube_token.py
+          else
+            echo "YouTube not selected; skipping token refresh."
+          fi
+
+      - name: Check YouTube Credentials
+        shell: bash
+        run: |
+          PLATFORMS_INPUT="${{ github.event.inputs.platforms }}"
+
+          if [ -z "$PLATFORMS_INPUT" ]; then
+            PLATFORMS_INPUT="$DEFAULT_PLATFORMS"
+          fi
+
+          if [[ ",$PLATFORMS_INPUT," == *",youtube,"* ]]; then
+            python check_channel.py
+          else
+            echo "YouTube not selected; skipping credential check."
           fi
 
       - name: Run Headless Upload
