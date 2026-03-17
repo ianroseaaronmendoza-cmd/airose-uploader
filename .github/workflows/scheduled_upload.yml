@@ -204,13 +204,7 @@ jobs:
 
             if [ $CHECK_EXIT -ne 0 ]; then
               echo "YouTube auth unavailable; removing youtube from this run."
-              EFFECTIVE_PLATFORMS=$(python - "$PLATFORMS_INPUT" <<'PY'
-import sys
-
-parts = [item.strip() for item in sys.argv[1].split(",") if item.strip().lower() != "youtube"]
-print(",".join(parts))
-PY
-)
+              EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'youtube'))" "$PLATFORMS_INPUT")
             fi
           else
             echo "YouTube not selected; skipping auth checks."
