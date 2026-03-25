@@ -18,6 +18,13 @@ from core.metadata_loader import (
     style_title_text,
 )
 from core.meta_uploader import upload_instagram_facebook_video
+from core.pinterest_uploader import (
+    explain_pinterest_readiness,
+    resolve_pinterest_board_id,
+    resolve_pinterest_media_url,
+    sanitize_pinterest_text,
+    upload_pinterest_pin,
+)
 from core.youtube_uploader import upload_video
 
 PUBLIC_VIDEO_URL_KEYS = (
@@ -65,11 +72,11 @@ def _get_drive_folder_url(data: dict) -> str | None:
 
 
 def _is_approved_for_upload(data: dict) -> bool:
-    return bool(
-        data.get("upload_status", {})
-        .get("youtube", {})
-        .get("approved", False)
-    )
+    upload_status = data.get("upload_status", {})
+    for platform in ("youtube", "tiktok", "instagram_facebook", "pinterest"):
+        if upload_status.get(platform, {}).get("approved", False):
+            return True
+    return False
 
 
 def _needs_youtube_upload(data: dict) -> bool:
@@ -92,7 +99,17 @@ def _has_pending_selected_platforms(data: dict, selected_platforms: set[str]) ->
         return True
     if "igfb" in selected_platforms and _needs_igfb_upload(data):
         return True
+    if "pinterest" in selected_platforms and _needs_pinterest_upload(data):
+        return True
     return False
+
+
+def _needs_pinterest_upload(data: dict) -> bool:
+    return not bool(
+        data.get("upload_status", {})
+        .get("pinterest", {})
+        .get("uploaded", False)
+    )
 
 
 def _extract_google_drive_file_id(url: str) -> str | None:
@@ -216,7 +233,7 @@ def _resolve_video_path_for_igfb(
 
 
 def _parse_platforms(value: str) -> set[str]:
-    allowed = {"youtube", "igfb"}
+    allowed = {"youtube", "igfb", "pinterest"}
     parts = {item.strip().lower() for item in value.split(",") if item.strip()}
     unknown = parts - allowed
     if unknown:
@@ -257,12 +274,12 @@ def _get_preset_for_current_time() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Headless uploader for scheduled runs (YouTube + IG/FB)."
+        description="Headless uploader for scheduled runs (YouTube + IG/FB + Pinterest)."
     )
     parser.add_argument(
         "--platforms",
         default="youtube,igfb",
-        help="Comma-separated list: youtube,igfb (default: youtube,igfb).",
+        help="Comma-separated list: youtube,igfb,pinterest (default: youtube,igfb).",
     )
     parser.add_argument(
         "--ids",
@@ -357,6 +374,7 @@ def main() -> int:
         "assets_skipped_unapproved": 0,
         "youtube_uploaded": 0,
         "igfb_updated": 0,
+        "pinterest_uploaded": 0,
         "errors": 0,
     }
 
@@ -491,6 +509,85 @@ def main() -> int:
                     print(f"  IG/FB Error: {message}")
                     if not args.dry_run:
                         igfb_status["error"] = message
+                        changed = True
+                    if args.fail_fast:
+                        stop_now = True
+
+        if not stop_now and "pinterest" in selected_platforms:
+            pinterest_status = data.setdefault("upload_status", {}).setdefault("pinterest", {})
+            if pinterest_status.get("uploaded"):
+                print("  Pinterest: already uploaded")
+            elif args.dry_run:
+                print("  Pinterest: would create pin")
+            else:
+                pinterest_title = sanitize_pinterest_text(
+                    style_title_text(data.get("pinterest_title", "")) or title
+                )
+                pinterest_description = sanitize_pinterest_text(
+                    style_description_text(data.get("pinterest_description", ""))
+                    or description
+                )
+                effective_board_id = resolve_pinterest_board_id(data)
+                pinterest_media_url = resolve_pinterest_media_url(
+                    data,
+                    video_path=asset.video_path,
+                )
+                pinterest_media_source = data.get("pinterest_media_source")
+                try:
+                    pin_id = upload_pinterest_pin(
+                        title=pinterest_title,
+                        description=pinterest_description,
+                        video_path=asset.video_path,
+                        media_url=pinterest_media_url or "",
+                        link=_get_first_non_empty(
+                            data,
+                            ("pinterest_link", "public_video_url", "youtube_video_url"),
+                        ) or "",
+                        alt_text=_get_first_non_empty(
+                            data,
+                            ("pinterest_alt_text", "description"),
+                        ) or "",
+                        board_id=effective_board_id,
+                        board_section_id=_get_first_non_empty(
+                            data,
+                            ("pinterest_board_section_id",),
+                        ) or "",
+                        media_source=(
+                            pinterest_media_source
+                            if isinstance(pinterest_media_source, dict)
+                            else None
+                        ),
+                    )
+                    pinterest_status["uploaded"] = True
+                    pinterest_status["uploaded_at"] = _utcnow_iso()
+                    pinterest_status["pin_id"] = pin_id
+                    pinterest_status["board_id"] = effective_board_id or pinterest_status.get("board_id")
+                    pinterest_status["board_section_id"] = _get_first_non_empty(
+                        data,
+                        ("pinterest_board_section_id",),
+                    ) or pinterest_status.get("board_section_id")
+                    pinterest_status["error"] = None
+                    data["pinterest_title"] = pinterest_title
+                    data["pinterest_description"] = pinterest_description
+                    data["pinterest_board_id"] = effective_board_id
+                    totals["pinterest_uploaded"] += 1
+                    changed = True
+                    print(f"  Pinterest: created pin_id={pin_id}")
+                except Exception as exc:
+                    message = str(exc)
+                    totals["errors"] += 1
+                    print(f"  Pinterest Error: {message}")
+                    print(
+                        "  Pinterest Hint: "
+                        + explain_pinterest_readiness(
+                            data,
+                            approved=True,
+                            already_uploaded=False,
+                            video_path=asset.video_path,
+                        )
+                    )
+                    if not args.dry_run:
+                        pinterest_status["error"] = message
                         changed = True
                     if args.fail_fast:
                         stop_now = True

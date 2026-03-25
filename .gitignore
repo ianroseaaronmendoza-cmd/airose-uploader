@@ -16,6 +16,7 @@ venv/
 /credentials.json
 /token.pkl
 /meta_credentials.json
+/pinterest_credentials.json
 /tiktok_credentials.json
 /tiktok_token.json
 /airoseuploader-5d291fd8c0f5.json
@@ -24,3 +25,12 @@ venv/
 
 # Logs
 *.log
+
+# OAuth / secrets
+*oauth_credentials.json
+*oauth_token.json
+token.json
+
+# Python
+__pycache__/
+*.pyc

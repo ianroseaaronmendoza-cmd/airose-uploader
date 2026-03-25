@@ -22,6 +22,11 @@ def compute_stats(assets: List[VideoAsset]):
         if a.upload_status.get("instagram_facebook", {}).get("uploaded") is True
     )
 
+    pin_uploaded = sum(
+        1 for a in assets
+        if a.upload_status.get("pinterest", {}).get("uploaded") is True
+    )
+
     return {
         "total": total,
         "valid": valid,
@@ -29,4 +34,5 @@ def compute_stats(assets: List[VideoAsset]):
         "yt_uploaded": yt_uploaded,
         "tt_uploaded": tt_uploaded,
         "ig_uploaded": ig_uploaded,
+        "pin_uploaded": pin_uploaded,
     }

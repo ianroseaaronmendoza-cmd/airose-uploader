@@ -43,6 +43,15 @@ UPLOAD_STATUS_TEMPLATE = {
         "facebook_video_id": None,
         "instagram_media_id": None,
         "error": None
+    },
+    "pinterest": {
+        "approved": False,
+        "uploaded": False,
+        "uploaded_at": None,
+        "pin_id": None,
+        "board_id": None,
+        "board_section_id": None,
+        "error": None,
     }
 }
 
@@ -319,6 +328,12 @@ def normalize_metadata(data: dict, file_path: str) -> dict:
     data.setdefault("watermark_text", "")
     data.setdefault("watermark_image", "")
     data.setdefault("created_at", "")
+    data.setdefault("pinterest_board_id", "")
+    data.setdefault("pinterest_board_section_id", "")
+    data.setdefault("pinterest_title", "")
+    data.setdefault("pinterest_description", "")
+    data.setdefault("pinterest_link", "")
+    data.setdefault("pinterest_alt_text", "")
 
     # Auto-generate title/description if empty
     script = data.get("script", "")
@@ -332,6 +347,12 @@ def normalize_metadata(data: dict, file_path: str) -> dict:
         data["description"] = generate_description_from_script(script)
     else:
         data["description"] = style_description_text(data["description"])
+
+    if data.get("pinterest_title"):
+        data["pinterest_title"] = style_title_text(data["pinterest_title"])
+
+    if data.get("pinterest_description"):
+        data["pinterest_description"] = style_description_text(data["pinterest_description"])
 
     # Ensure upload_status
     if "upload_status" not in data or not isinstance(data["upload_status"], dict):

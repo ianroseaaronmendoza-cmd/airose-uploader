@@ -1,0 +1,47 @@
+{
+  "count": 7,
+  "boards": [
+    {
+      "id": "1142366330421125990",
+      "name": "Christian Faith and Stewardship",
+      "description": "Biblical teachings on giving, stewardship, contentment, and faith.",
+      "privacy": "PUBLIC"
+    },
+    {
+      "id": "1142366330421257918",
+      "name": "Mental Clarity & Life Truths",
+      "description": "",
+      "privacy": "PUBLIC"
+    },
+    {
+      "id": "1142366330421103625",
+      "name": "Online Business Systems (2026)",
+      "description": "",
+      "privacy": "PUBLIC"
+    },
+    {
+      "id": "1142366330421257922",
+      "name": "Quiet Thoughts & Deep Feelings",
+      "description": "",
+      "privacy": "PUBLIC"
+    },
+    {
+      "id": "1142366330421257919",
+      "name": "Relationship Psychology",
+      "description": "",
+      "privacy": "PUBLIC"
+    },
+    {
+      "id": "1142366330421103646",
+      "name": "Self Discipline / Habit Change",
+      "description": "",
+      "privacy": "PUBLIC"
+    },
+    {
+      "id": "1142366330421097685",
+      "name": "Skin Clarity & Simple Habits",
+      "description": "",
+      "privacy": "PUBLIC"
+    }
+  ]
+}

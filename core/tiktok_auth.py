@@ -30,11 +30,11 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CREDS_PATH = os.path.join(BASE_DIR, "tiktok_credentials.json")
 TOKEN_PATH = os.path.join(BASE_DIR, "tiktok_token.json")
 
-REDIRECT_URI = "http://localhost:8585/callback"
+DEFAULT_REDIRECT_URI = "http://localhost:8585/callback"
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 
-SCOPES = "video.upload,video.publish"
+DEFAULT_SCOPES = "video.upload,video.publish"
 
 
 def _load_client_creds() -> dict:
@@ -49,6 +49,79 @@ def _load_client_creds() -> dict:
     if "client_key" not in data or "client_secret" not in data:
         raise ValueError("tiktok_credentials.json must contain client_key and client_secret")
     return data
+
+
+def get_tiktok_oauth_settings() -> dict:
+    creds = _load_client_creds()
+    return {
+        "client_key": str(creds.get("client_key", "")).strip(),
+        "client_secret": str(creds.get("client_secret", "")).strip(),
+        "redirect_uri": str(creds.get("redirect_uri", DEFAULT_REDIRECT_URI)).strip() or DEFAULT_REDIRECT_URI,
+        "scopes": str(creds.get("scopes", DEFAULT_SCOPES)).strip() or DEFAULT_SCOPES,
+        "website_url": str(creds.get("website_url", "")).strip(),
+    }
+
+
+def build_tiktok_auth_url() -> tuple[str, dict]:
+    oauth_settings = get_tiktok_oauth_settings()
+    params = {
+        "client_key": oauth_settings["client_key"],
+        "response_type": "code",
+        "scope": oauth_settings["scopes"],
+        "redirect_uri": oauth_settings["redirect_uri"],
+    }
+    return f"{AUTH_URL}?{urlencode(params)}", oauth_settings
+
+
+def wait_for_tiktok_callback(redirect_uri: str) -> str:
+    parsed_redirect = urlparse(redirect_uri)
+    redirect_host = parsed_redirect.hostname or "127.0.0.1"
+    redirect_port = parsed_redirect.port or 8585
+
+    auth_code: dict[str, str | None] = {}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            qs = parse_qs(urlparse(self.path).query)
+            auth_code["code"] = qs.get("code", [None])[0]
+            auth_code["error"] = qs.get("error", [None])[0]
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"<h3>TikTok authorization complete - you can close this tab.</h3>")
+
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer((redirect_host, redirect_port), _Handler)
+    try:
+        server.handle_request()
+    finally:
+        server.server_close()
+
+    if auth_code.get("error") or not auth_code.get("code"):
+        raise RuntimeError(f"TikTok auth failed: {auth_code.get('error', 'no code')}")
+    return str(auth_code["code"])
+
+
+def exchange_tiktok_code_for_token(code: str) -> dict:
+    oauth_settings = get_tiktok_oauth_settings()
+    response = requests.post(
+        TOKEN_URL,
+        json={
+            "client_key": oauth_settings["client_key"],
+            "client_secret": oauth_settings["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": oauth_settings["redirect_uri"],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    token_data = response.json()
+    if "access_token" not in token_data:
+        raise RuntimeError(f"Token exchange failed: {token_data}")
+    _save_token(token_data)
+    return token_data
 
 
 def _save_token(token_data: dict):
@@ -87,11 +160,18 @@ def _refresh_access_token(creds: dict, token: dict) -> dict:
 
 def _authorize_via_browser(creds: dict) -> dict:
     """Open browser for user consent, capture redirect, exchange code for token."""
+    oauth_settings = get_tiktok_oauth_settings()
+    redirect_uri = oauth_settings["redirect_uri"]
+    scopes = oauth_settings["scopes"]
+    parsed_redirect = urlparse(redirect_uri)
+    redirect_host = parsed_redirect.hostname or "127.0.0.1"
+    redirect_port = parsed_redirect.port or 8585
+
     params = {
         "client_key": creds["client_key"],
         "response_type": "code",
-        "scope": SCOPES,
-        "redirect_uri": REDIRECT_URI,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
     }
     url = f"{AUTH_URL}?{urlencode(params)}"
 
@@ -110,7 +190,7 @@ def _authorize_via_browser(creds: dict) -> dict:
         def log_message(self, *_args):
             pass  # silence logs
 
-    server = HTTPServer(("127.0.0.1", 8585), _Handler)
+    server = HTTPServer((redirect_host, redirect_port), _Handler)
     webbrowser.open(url)
     print("Waiting for TikTok authorization in browser…")
     server.handle_request()  # blocks until one request
@@ -124,7 +204,7 @@ def _authorize_via_browser(creds: dict) -> dict:
         "client_secret": creds["client_secret"],
         "code": auth_code["code"],
         "grant_type": "authorization_code",
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": redirect_uri,
     })
     resp.raise_for_status()
     token_data = resp.json()
