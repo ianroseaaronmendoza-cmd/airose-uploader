@@ -28,11 +28,14 @@ Add these as repository secrets:
 - `YOUTUBE_TOKEN_PKL_B64`
 - `META_CREDENTIALS_JSON_B64`
 - `GOOGLE_SERVICE_ACCOUNT_JSON_B64` (required when syncing metadata/video folders from Google Drive)
+- `ALERT_WEBHOOK_URL` (optional webhook for YouTube auth failure alerts)
 
 Notes:
 
 - `YOUTUBE_TOKEN_PKL_B64` must be the full single-line base64 value.
 - The JSON-based secrets can be stored either as the full single-line base64 value or as raw JSON text.
+- If `ALERT_WEBHOOK_URL` is set, the workflow sends a JSON webhook when YouTube auth refresh or channel validation fails.
+- The workflow also writes the YouTube auth output to `.runtime/logs/youtube_auth.log` and adds a GitHub Actions step summary entry on failure.
 
 ## 3. Set GitHub Variables
 

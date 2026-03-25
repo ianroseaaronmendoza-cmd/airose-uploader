@@ -59,6 +59,7 @@ jobs:
           YOUTUBE_TOKEN_PKL_B64: ${{ secrets.YOUTUBE_TOKEN_PKL_B64 }}
           META_CREDENTIALS_JSON_B64: ${{ secrets.META_CREDENTIALS_JSON_B64 }}
           GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: |
           python - <<'PY'
           import base64
@@ -183,6 +184,11 @@ jobs:
         shell: bash
         run: |
           PLATFORMS_INPUT="${{ github.event.inputs.platforms }}"
+          mkdir -p .runtime/logs
+          YT_AUTH_LOG=".runtime/logs/youtube_auth.log"
+          : > "$YT_AUTH_LOG"
+          YOUTUBE_AUTH_FAILED="false"
+          YOUTUBE_AUTH_REASON=""
 
           if [ -z "$PLATFORMS_INPUT" ]; then
             PLATFORMS_INPUT="$DEFAULT_PLATFORMS"
@@ -192,18 +198,29 @@ jobs:
 
           if [[ ",$PLATFORMS_INPUT," == *",youtube,"* ]]; then
             set +e
-            python refresh_youtube_token.py --no-interactive
-            REFRESH_EXIT=$?
+            python refresh_youtube_token.py --no-interactive 2>&1 | tee -a "$YT_AUTH_LOG"
+            REFRESH_EXIT=${PIPESTATUS[0]}
             if [ $REFRESH_EXIT -eq 0 ]; then
-              python check_channel.py
-              CHECK_EXIT=$?
+              python check_channel.py 2>&1 | tee -a "$YT_AUTH_LOG"
+              CHECK_EXIT=${PIPESTATUS[0]}
             else
               CHECK_EXIT=$REFRESH_EXIT
             fi
             set -e
 
             if [ $CHECK_EXIT -ne 0 ]; then
-              echo "YouTube auth unavailable; removing youtube from this run."
+              YOUTUBE_AUTH_FAILED="true"
+              YOUTUBE_AUTH_REASON="refresh_or_channel_check_failed"
+              echo "::error::YouTube auth failed. Refresh token may be expired, revoked, or missing. Update token.pkl / YOUTUBE_TOKEN_PKL_B64."
+              echo "YouTube auth failed; removing youtube from this run."
+              {
+                echo "## YouTube Auth Failure"
+                echo
+                echo "- Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                echo "- Reason: refresh_or_channel_check_failed"
+                echo "- Action: refresh local YouTube auth and update \`YOUTUBE_TOKEN_PKL_B64\`"
+                echo "- Log: \`$YT_AUTH_LOG\`"
+              } >> "$GITHUB_STEP_SUMMARY"
               EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'youtube'))" "$PLATFORMS_INPUT")
             fi
           else
@@ -215,6 +232,9 @@ jobs:
             exit 1
           fi
 
+          echo "YOUTUBE_AUTH_FAILED=$YOUTUBE_AUTH_FAILED" >> "$GITHUB_ENV"
+          echo "YOUTUBE_AUTH_REASON=$YOUTUBE_AUTH_REASON" >> "$GITHUB_ENV"
+          echo "YOUTUBE_AUTH_LOG=$YT_AUTH_LOG" >> "$GITHUB_ENV"
           echo "EFFECTIVE_PLATFORMS=$EFFECTIVE_PLATFORMS" >> "$GITHUB_ENV"
           echo "Effective platforms: $EFFECTIVE_PLATFORMS"
 
@@ -252,6 +272,38 @@ jobs:
           else
             echo "No scheduled preset override for event: $EVENT_NAME"
           fi
+
+      - name: Notify YouTube Auth Failure
+        if: ${{ env.YOUTUBE_AUTH_FAILED == 'true' && secrets.ALERT_WEBHOOK_URL != '' }}
+        shell: bash
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          webhook_url = os.environ["ALERT_WEBHOOK_URL"].strip()
+          payload = {
+              "text": (
+                  "YouTube auth failed in scheduled_upload.yml. "
+                  "Refresh local auth and update the YOUTUBE_TOKEN_PKL_B64 GitHub secret."
+              ),
+              "workflow": "Scheduled Upload (Headless)",
+              "reason": os.environ.get("YOUTUBE_AUTH_REASON", "unknown"),
+              "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "server_url": os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+          }
+          req = urllib.request.Request(
+              webhook_url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              print(f"Alert webhook responded with HTTP {resp.status}")
+          PY
 
       - name: Run Headless Upload
         shell: bash
