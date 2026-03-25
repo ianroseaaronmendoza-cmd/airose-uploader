@@ -218,6 +218,41 @@ jobs:
           echo "EFFECTIVE_PLATFORMS=$EFFECTIVE_PLATFORMS" >> "$GITHUB_ENV"
           echo "Effective platforms: $EFFECTIVE_PLATFORMS"
 
+      - name: Resolve Scheduled Preset
+        shell: bash
+        run: |
+          EVENT_NAME="${{ github.event_name }}"
+          EVENT_SCHEDULE="${{ github.event.schedule }}"
+          RESOLVED_PRESET=""
+
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            case "$EVENT_SCHEDULE" in
+              "0 0 * * *")
+                RESOLVED_PRESET="faith"
+                ;;
+              "9 6 * * *")
+                RESOLVED_PRESET="love"
+                ;;
+              "18 12 * * *")
+                RESOLVED_PRESET="sentimental"
+                ;;
+              "27 18 * * *")
+                RESOLVED_PRESET="neutral"
+                ;;
+              *)
+                echo "Unknown scheduled cron entry: $EVENT_SCHEDULE"
+                exit 1
+                ;;
+            esac
+          fi
+
+          echo "RESOLVED_PRESET=$RESOLVED_PRESET" >> "$GITHUB_ENV"
+          if [ -n "$RESOLVED_PRESET" ]; then
+            echo "Resolved scheduled preset: $RESOLVED_PRESET"
+          else
+            echo "No scheduled preset override for event: $EVENT_NAME"
+          fi
+
       - name: Run Headless Upload
         shell: bash
         run: |
@@ -228,7 +263,12 @@ jobs:
             EXTRA_ARGS="--dry-run"
           fi
 
-          python cron_headless_upload.py --random-one --platforms "$EFFECTIVE_PLATFORMS" $EXTRA_ARGS
+          PRESET_ARGS=""
+          if [ -n "$RESOLVED_PRESET" ]; then
+            PRESET_ARGS="--preset $RESOLVED_PRESET"
+          fi
+
+          python cron_headless_upload.py --random-one --platforms "$EFFECTIVE_PLATFORMS" $PRESET_ARGS $EXTRA_ARGS
 
       - name: Push Metadata Updates to Google Drive
         if: ${{ github.event.inputs.dry_run != 'true' && env.GOOGLE_DRIVE_METADATA_FOLDER_URL != '' }}

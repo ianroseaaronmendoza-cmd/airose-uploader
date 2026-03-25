@@ -61,11 +61,15 @@ Workflow file:
 
 It supports:
 
-- Scheduled run (daily at 8:00 AM and 8:00 PM Asia/Singapore, which is 00:00 UTC and 12:00 UTC)
+- Scheduled runs 4 times daily with preset-specific slots:
+  - `00:00 UTC` (`08:00 Asia/Singapore`) -> `faith`
+  - `06:09 UTC` (`14:09 Asia/Singapore`) -> `love`
+  - `12:18 UTC` (`20:18 Asia/Singapore`) -> `sentimental`
+  - `18:27 UTC` (`02:27 Asia/Singapore next day`) -> `neutral`
 - Manual run (`workflow_dispatch`) with optional:
   - `platforms` (default: `youtube,igfb`)
   - `dry_run` (`true/false`)
-- Each run picks exactly one approved asset at random and uses that same asset for the selected platforms in that run.
+- Each scheduled run picks exactly one approved asset at random for that run's preset and uses that same asset for the selected platforms in that run.
 
 Drive-backed mode:
 

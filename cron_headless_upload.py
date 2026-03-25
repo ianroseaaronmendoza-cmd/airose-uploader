@@ -246,9 +246,16 @@ def _parse_ids(value: str) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
+def _parse_preset(value: str) -> str:
+    preset = (value or "").strip().lower()
+    allowed = {"faith", "love", "sentimental", "neutral"}
+    if preset not in allowed:
+        raise ValueError(f"Unsupported preset: {preset!r}. Expected one of {sorted(allowed)}")
+    return preset
+
+
 def _get_preset_for_current_time() -> str:
     """Return the preset to use based on the current scheduled time."""
-    from datetime import datetime
     now = datetime.utcnow()
     hour = now.hour
     minute = now.minute
@@ -317,6 +324,11 @@ def main() -> int:
         action="store_true",
         help="Pick exactly one approved asset at random from the filtered pool.",
     )
+    parser.add_argument(
+        "--preset",
+        default="",
+        help="Optional preset override for --random-one: faith,love,sentimental,neutral.",
+    )
     args = parser.parse_args()
 
     selected_platforms = _parse_platforms(args.platforms)
@@ -335,9 +347,13 @@ def main() -> int:
     if args.limit > 0:
         assets = assets[:args.limit]
     if args.random_one:
-        target_preset = _get_preset_for_current_time()
+        target_preset = (
+            _parse_preset(args.preset)
+            if args.preset.strip()
+            else _get_preset_for_current_time()
+        )
         print(f"Target preset for this run: {target_preset}")
-        
+
         candidate_assets = []
         for asset in assets:
             if asset.error_state:
@@ -349,7 +365,7 @@ def main() -> int:
                 selected_platforms,
             ):
                 continue
-            
+
             # Load metadata to check preset
             try:
                 data = _load_json(asset.metadata_path)
