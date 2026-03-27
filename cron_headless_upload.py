@@ -573,6 +573,7 @@ def main() -> int:
                             if isinstance(pinterest_media_source, dict)
                             else None
                         ),
+                        cover_image_key_frame_time=data.get("pinterest_cover_image_key_frame_time"),
                     )
                     pinterest_status["uploaded"] = True
                     pinterest_status["uploaded_at"] = _utcnow_iso()

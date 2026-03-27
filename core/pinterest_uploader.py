@@ -189,9 +189,16 @@ def _build_media_source(
     video_path: str,
     media_url: str,
     explicit_media_source: dict[str, Any] | None,
+    cover_image_key_frame_time: str | int | float | None = None,
 ) -> dict[str, Any]:
     if explicit_media_source:
-        return dict(explicit_media_source)
+        source = dict(explicit_media_source)
+        _ensure_video_media_source_has_cover(
+            source,
+            default_key_frame_time=cover_image_key_frame_time,
+            config=config,
+        )
+        return source
     upload_path, temp_path = _prepare_pinterest_video_file(video_path, media_url)
     try:
         media_upload = _register_media_upload(config)
@@ -203,10 +210,72 @@ def _build_media_source(
                 os.remove(temp_path)
             except OSError:
                 pass
-    return {
+    source = {
         "source_type": "video_id",
         "media_id": media_id,
     }
+    _ensure_video_media_source_has_cover(
+        source,
+        default_key_frame_time=cover_image_key_frame_time,
+        config=config,
+    )
+    return source
+
+
+def _media_source_has_cover(source: dict[str, Any]) -> bool:
+    if _first_non_empty(source.get("cover_image_url")):
+        return True
+    if source.get("cover_image_key_frame_time") not in (None, ""):
+        return True
+    return bool(
+        _first_non_empty(source.get("cover_image_content_type"))
+        and _first_non_empty(source.get("cover_image_data"))
+    )
+
+
+def _coerce_cover_image_key_frame_time(value: Any) -> int | float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("Pinterest cover_image_key_frame_time must be numeric, not boolean.")
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            numeric = float(text)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid Pinterest cover_image_key_frame_time: {value!r}"
+            ) from exc
+    if numeric < 0:
+        raise ValueError("Pinterest cover_image_key_frame_time must be >= 0.")
+    if numeric.is_integer():
+        return int(numeric)
+    return numeric
+
+
+def _ensure_video_media_source_has_cover(
+    source: dict[str, Any],
+    *,
+    default_key_frame_time: str | int | float | None,
+    config: dict[str, Any],
+) -> None:
+    if str(source.get("source_type", "")).strip().lower() != "video_id":
+        return
+    if _media_source_has_cover(source):
+        return
+
+    resolved_key_frame_time = _coerce_cover_image_key_frame_time(
+        default_key_frame_time
+        if default_key_frame_time not in (None, "")
+        else config.get("cover_image_key_frame_time")
+    )
+    if resolved_key_frame_time is None:
+        resolved_key_frame_time = 0
+    source["cover_image_key_frame_time"] = resolved_key_frame_time
 
 
 def _prepare_pinterest_video_file(video_path: str, media_url: str) -> tuple[str, str | None]:
@@ -349,6 +418,7 @@ def _build_pinterest_pin_payload(
     board_id: str = "",
     board_section_id: str = "",
     media_source: dict[str, Any] | None = None,
+    cover_image_key_frame_time: str | int | float | None = None,
 ) -> dict[str, Any]:
     effective_board_id = _first_non_empty(board_id, config.get("board_id"))
     if not effective_board_id:
@@ -370,6 +440,7 @@ def _build_pinterest_pin_payload(
             video_path=video_path,
             media_url=media_url,
             explicit_media_source=media_source,
+            cover_image_key_frame_time=cover_image_key_frame_time,
         ),
     }
 
@@ -392,6 +463,7 @@ def upload_pinterest_pin_with_details(
     board_id: str = "",
     board_section_id: str = "",
     media_source: dict[str, Any] | None = None,
+    cover_image_key_frame_time: str | int | float | None = None,
     api_base_url_override: str = "",
 ) -> tuple[str, dict[str, Any], str]:
     config = get_pinterest_config(api_base_url_override=api_base_url_override)
@@ -406,6 +478,7 @@ def upload_pinterest_pin_with_details(
         board_id=board_id,
         board_section_id=board_section_id,
         media_source=media_source,
+        cover_image_key_frame_time=cover_image_key_frame_time,
     )
 
     response = requests.post(
@@ -443,6 +516,7 @@ def upload_pinterest_pin(
     board_id: str = "",
     board_section_id: str = "",
     media_source: dict[str, Any] | None = None,
+    cover_image_key_frame_time: str | int | float | None = None,
     api_base_url_override: str = "",
 ) -> str:
     pin_id, _, _ = upload_pinterest_pin_with_details(
@@ -455,6 +529,7 @@ def upload_pinterest_pin(
         board_id=board_id,
         board_section_id=board_section_id,
         media_source=media_source,
+        cover_image_key_frame_time=cover_image_key_frame_time,
         api_base_url_override=api_base_url_override,
     )
     return pin_id

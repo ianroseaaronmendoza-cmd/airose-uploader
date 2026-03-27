@@ -6,7 +6,7 @@ on:
       platforms:
         description: "Comma-separated platforms (youtube,igfb,pinterest)"
         required: false
-        default: "youtube,igfb"
+        default: "youtube,igfb,pinterest"
       dry_run:
         description: "Run without uploading or writing metadata"
         required: false
@@ -36,7 +36,8 @@ jobs:
       GOOGLE_DRIVE_METADATA_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_METADATA_FOLDER_URL }}
       GOOGLE_DRIVE_VIDEO_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_VIDEO_FOLDER_URL }}
       DRIVE_SERVICE_ACCOUNT_PATH: google_service_account.json
-      DEFAULT_PLATFORMS: youtube,igfb
+      DEFAULT_PLATFORMS: youtube,igfb,pinterest
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -274,10 +275,8 @@ jobs:
           fi
 
       - name: Notify YouTube Auth Failure
-        if: ${{ env.YOUTUBE_AUTH_FAILED == 'true' && secrets.ALERT_WEBHOOK_URL != '' }}
+        if: ${{ env.YOUTUBE_AUTH_FAILED == 'true' && env.ALERT_WEBHOOK_URL != '' }}
         shell: bash
-        env:
-          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: |
           python - <<'PY'
           import json
@@ -366,3 +365,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: update upload status [skip ci]"
           git push
+

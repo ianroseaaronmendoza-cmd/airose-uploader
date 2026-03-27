@@ -43,4 +43,5 @@ def get_pinterest_config(*, api_base_url_override: str = "") -> dict[str, Any]:
         "board_section_id": str(data.get("board_section_id", "")).strip(),
         "api_base_url": api_base_url,
         "media_source_type": str(data.get("media_source_type", "video_url")).strip() or "video_url",
+        "cover_image_key_frame_time": data.get("cover_image_key_frame_time", 0),
     }

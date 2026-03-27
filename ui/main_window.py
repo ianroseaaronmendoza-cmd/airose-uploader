@@ -1385,6 +1385,7 @@ class MainWindow(QMainWindow):
             board_id=upload_args["board_id"],
             board_section_id=upload_args["board_section_id"],
             media_source=upload_args["media_source"],
+            cover_image_key_frame_time=upload_args.get("cover_image_key_frame_time"),
             api_base_url_override=PINTEREST_SANDBOX_API_BASE_URL,
         )
 
@@ -1608,6 +1609,7 @@ class MainWindow(QMainWindow):
                             if isinstance(pinterest_media_source, dict)
                             else None
                         ),
+                        "cover_image_key_frame_time": data.get("pinterest_cover_image_key_frame_time"),
                     },
                 )
                 return
@@ -1625,6 +1627,7 @@ class MainWindow(QMainWindow):
                     if isinstance(pinterest_media_source, dict)
                     else None
                 ),
+                cover_image_key_frame_time=data.get("pinterest_cover_image_key_frame_time"),
             )
 
             pin_status = data.setdefault("upload_status", {}).setdefault("pinterest", {})
