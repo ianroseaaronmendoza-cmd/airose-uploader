@@ -250,16 +250,16 @@ jobs:
 
           if [ "$EVENT_NAME" = "schedule" ]; then
             case "$EVENT_SCHEDULE" in
-              "0 0 * * *")
+              "3 0 * * *")
                 RESOLVED_PRESET="faith"
                 ;;
-              "9 6 * * *")
+              "12 6 * * *")
                 RESOLVED_PRESET="love"
                 ;;
-              "18 12 * * *")
+              "21 12 * * *")
                 RESOLVED_PRESET="sentimental"
                 ;;
-              "27 18 * * *")
+              "30 18 * * *")
                 RESOLVED_PRESET="neutral"
                 ;;
               *)

@@ -1005,9 +1005,9 @@ class MainWindow(QMainWindow):
         if not self._run_tiktok_sequence_step(
             4,
             6,
-            "TikTok Sandbox API Call",
-            "Real sandbox API touchpoint for the review recording.",
-            "Step 4: Initialize TikTok Direct Post API Request",
+            "TikTok Sandbox Acceptance",
+            "Real TikTok sandbox API acceptance evidence for the review recording.",
+            "Step 4: TikTok Accepted the Upload Init Request",
             "\n".join(
                 [
                     f"POST {PUBLISH_URL}",
@@ -1015,9 +1015,12 @@ class MainWindow(QMainWindow):
                     "Request payload:",
                     json.dumps(init_result["request_payload"], indent=2),
                     "",
-                    "Sandbox response received.",
+                    "TikTok accepted the authenticated upload/init request.",
                     f"publish_id: {publish_id}",
                     f"upload_url: {self._mask_secret(upload_url, keep=12) if upload_url else '(missing)'}",
+                    "",
+                    "Response JSON:",
+                    json.dumps(init_result["response"], indent=2),
                 ]
             ),
             button_text="Show Simulated Upload",
@@ -1035,7 +1038,8 @@ class MainWindow(QMainWindow):
                     "Uploading video to TikTok sandbox... (Simulated for demo)",
                     "Finalizing TikTok publish... (Simulated for demo)",
                     "",
-                    "The OAuth and video/init API call were real. The final upload result is simulated for the review recording.",
+                    "Proof captured so far is real: OAuth succeeded and TikTok returned a publish_id for the upload/init request.",
+                    "Only this final upload/publish completion step is simulated for the review recording.",
                 ]
             ),
             button_text="Finish Demo",
@@ -1051,7 +1055,10 @@ class MainWindow(QMainWindow):
             "\n".join(
                 [
                     f"Sandbox publish_id: {publish_id}",
+                    f"Sandbox upload_url: {self._mask_secret(upload_url, keep=12) if upload_url else '(missing)'}",
                     "",
+                    "TikTok sandbox accepted the upload/init request for this video.",
+                    "Only the final upload/publish completion was simulated.",
                     "Demo only. Metadata was not changed.",
                 ]
             ),
