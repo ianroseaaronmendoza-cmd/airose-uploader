@@ -1,4 +1,4 @@
-# GitHub Scheduled Upload Setup (YouTube + IG/FB)
+# GitHub Scheduled Upload Setup (YouTube + IG/FB + Pinterest)
 
 ## 1. One-time local auth (YouTube)
 
@@ -70,7 +70,8 @@ It supports:
   - `12:18 UTC` (`20:18 Asia/Singapore`) -> `sentimental`
   - `18:27 UTC` (`02:27 Asia/Singapore next day`) -> `neutral`
 - Manual run (`workflow_dispatch`) with optional:
-  - `platforms` (default: `youtube,igfb`)
+  - `platforms` (default: `youtube,igfb,pinterest`)
+  - `pinterest_only` (`true/false`) to force a Pinterest-only run via checkbox
   - `dry_run` (`true/false`)
 - Each scheduled run picks exactly one approved asset at random for that run's preset and uses that same asset for the selected platforms in that run.
 

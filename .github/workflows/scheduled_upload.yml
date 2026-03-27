@@ -7,6 +7,11 @@ on:
         description: "Comma-separated platforms (youtube,igfb,pinterest)"
         required: false
         default: "youtube,igfb,pinterest"
+      pinterest_only:
+        description: "Run Pinterest only and ignore the platforms field"
+        required: false
+        type: boolean
+        default: false
       dry_run:
         description: "Run without uploading or writing metadata"
         required: false
@@ -187,6 +192,7 @@ jobs:
         shell: bash
         run: |
           PLATFORMS_INPUT="${{ github.event.inputs.platforms }}"
+          PINTEREST_ONLY_INPUT="${{ github.event.inputs.pinterest_only }}"
           mkdir -p .runtime/logs
           YT_AUTH_LOG=".runtime/logs/youtube_auth.log"
           : > "$YT_AUTH_LOG"
@@ -197,9 +203,14 @@ jobs:
             PLATFORMS_INPUT="$DEFAULT_PLATFORMS"
           fi
 
-          EFFECTIVE_PLATFORMS="$PLATFORMS_INPUT"
+          if [ "$PINTEREST_ONLY_INPUT" = "true" ]; then
+            EFFECTIVE_PLATFORMS="pinterest"
+            echo "Pinterest-only run requested; overriding platforms to pinterest."
+          else
+            EFFECTIVE_PLATFORMS="$PLATFORMS_INPUT"
+          fi
 
-          if [[ ",$PLATFORMS_INPUT," == *",youtube,"* ]]; then
+          if [[ ",$EFFECTIVE_PLATFORMS," == *",youtube,"* ]]; then
             set +e
             python refresh_youtube_token.py --no-interactive 2>&1 | tee -a "$YT_AUTH_LOG"
             REFRESH_EXIT=${PIPESTATUS[0]}
@@ -224,7 +235,7 @@ jobs:
                 echo "- Action: refresh local YouTube auth and update \`YOUTUBE_TOKEN_PKL_B64\`"
                 echo "- Log: \`$YT_AUTH_LOG\`"
               } >> "$GITHUB_STEP_SUMMARY"
-              EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'youtube'))" "$PLATFORMS_INPUT")
+              EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'youtube'))" "$EFFECTIVE_PLATFORMS")
             fi
           else
             echo "YouTube not selected; skipping auth checks."

@@ -5,6 +5,7 @@ import re
 import tempfile
 import time
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -49,6 +50,31 @@ def _normalize_public_video_url(video_url: str) -> str:
     if file_id:
         return f"https://drive.google.com/uc?export=download&id={file_id}"
     return url
+
+
+def _normalize_pinterest_link(link: str) -> str:
+    candidate = (link or "").strip()
+    if not candidate:
+        return ""
+
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    query = parse_qs(parsed.query)
+
+    if query.get("alt", [""])[0].lower() == "media":
+        return ""
+    if host.endswith("drive.google.com") and path == "/uc" and query.get("export", [""])[0].lower() == "download":
+        return ""
+    if host == "www.googleapis.com" and path.startswith("/drive/v3/files/"):
+        return ""
+    if path.endswith((".mp4", ".mov", ".m4v", ".avi", ".wmv", ".webm", ".mkv")):
+        return ""
+
+    return candidate
 
 
 def has_pinterest_media_source(data: dict[str, Any], video_path: str = "") -> bool:
@@ -446,8 +472,9 @@ def _build_pinterest_pin_payload(
 
     if effective_section_id:
         payload["board_section_id"] = effective_section_id
-    if link.strip():
-        payload["link"] = link.strip()
+    normalized_link = _normalize_pinterest_link(link)
+    if normalized_link:
+        payload["link"] = normalized_link
     if alt_text.strip():
         payload["alt_text"] = alt_text.strip()
     return payload
