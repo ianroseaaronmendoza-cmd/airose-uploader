@@ -71,6 +71,17 @@ def _get_drive_folder_url(data: dict) -> str | None:
     return _get_first_non_empty(data, DRIVE_FOLDER_URL_KEYS)
 
 
+def _describe_url_host(url: str) -> str:
+    candidate = (url or "").strip()
+    if not candidate:
+        return ""
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return ""
+    return parsed.netloc.lower()
+
+
 def _is_approved_for_upload(data: dict) -> bool:
     upload_status = data.get("upload_status", {})
     for platform in ("youtube", "tiktok", "instagram_facebook", "pinterest"):
@@ -549,16 +560,37 @@ def main() -> int:
                     video_path=asset.video_path,
                 )
                 pinterest_media_source = data.get("pinterest_media_source")
+                pinterest_link = _get_first_non_empty(
+                    data,
+                    ("pinterest_link", "public_video_url", "youtube_video_url"),
+                ) or ""
+                pinterest_link_host = _describe_url_host(pinterest_link)
+                pinterest_media_host = _describe_url_host(pinterest_media_url or "")
+                pinterest_media_origin = (
+                    "explicit_media_source"
+                    if isinstance(pinterest_media_source, dict)
+                    else "local_video"
+                    if os.path.isfile(asset.video_path)
+                    else "remote_media_url"
+                    if pinterest_media_url
+                    else "missing"
+                )
+                print(
+                    "  Pinterest Debug: "
+                    f"board_id={effective_board_id or '(missing)'} "
+                    f"section_id={_get_first_non_empty(data, ('pinterest_board_section_id',)) or '(none)'} "
+                    f"link_present={'yes' if pinterest_link else 'no'} "
+                    f"link_host={pinterest_link_host or '(none)'} "
+                    f"media_origin={pinterest_media_origin} "
+                    f"media_host={pinterest_media_host or '(local)'}"
+                )
                 try:
                     pin_id = upload_pinterest_pin(
                         title=pinterest_title,
                         description=pinterest_description,
                         video_path=asset.video_path,
                         media_url=pinterest_media_url or "",
-                        link=_get_first_non_empty(
-                            data,
-                            ("pinterest_link", "public_video_url", "youtube_video_url"),
-                        ) or "",
+                        link=pinterest_link,
                         alt_text=_get_first_non_empty(
                             data,
                             ("pinterest_alt_text", "description"),
