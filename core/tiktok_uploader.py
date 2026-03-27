@@ -14,6 +14,14 @@ from core.tiktok_auth import get_tiktok_access_token
 PUBLISH_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
 
 
+def _format_tiktok_error_response(response: requests.Response) -> str:
+    try:
+        details = response.json()
+    except ValueError:
+        details = response.text
+    return f"HTTP {response.status_code}: {details}"
+
+
 def upload_tiktok_video(video_path: str, title: str, description: str = "") -> str:
     """Upload a video to TikTok and return the publish_id.
 
@@ -65,7 +73,10 @@ def upload_tiktok_video(video_path: str, title: str, description: str = "") -> s
     }
 
     resp = requests.post(PUBLISH_URL, headers=headers, json=init_body)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(
+            f"TikTok init request failed: {_format_tiktok_error_response(resp)}"
+        )
     data = resp.json()
 
     if "error" in data and data["error"].get("code") != "ok":
@@ -82,7 +93,10 @@ def upload_tiktok_video(video_path: str, title: str, description: str = "") -> s
             "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
         }
         put_resp = requests.put(upload_url, headers=put_headers, data=f)
-        put_resp.raise_for_status()
+        if not put_resp.ok:
+            raise RuntimeError(
+                f"TikTok upload bytes failed: {_format_tiktok_error_response(put_resp)}"
+            )
 
     print(f"TikTok upload complete. publish_id: {publish_id}")
     return publish_id

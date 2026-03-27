@@ -59,6 +59,7 @@ jobs:
           YOUTUBE_CREDENTIALS_JSON_B64: ${{ secrets.YOUTUBE_CREDENTIALS_JSON_B64 }}
           YOUTUBE_TOKEN_PKL_B64: ${{ secrets.YOUTUBE_TOKEN_PKL_B64 }}
           META_CREDENTIALS_JSON_B64: ${{ secrets.META_CREDENTIALS_JSON_B64 }}
+          PINTEREST_CREDENTIALS_JSON_B64: ${{ secrets.PINTEREST_CREDENTIALS_JSON_B64 }}
           GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: |
@@ -73,6 +74,7 @@ jobs:
               "YOUTUBE_CREDENTIALS_JSON_B64": ("credentials.json", "json"),
               "YOUTUBE_TOKEN_PKL_B64": ("token.pkl", "binary"),
               "META_CREDENTIALS_JSON_B64": ("meta_credentials.json", "json"),
+              "PINTEREST_CREDENTIALS_JSON_B64": ("pinterest_credentials.json", "json"),
           }
           optional_mappings = {
               "GOOGLE_SERVICE_ACCOUNT_JSON_B64": ("google_service_account.json", "json"),

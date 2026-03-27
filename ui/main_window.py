@@ -975,7 +975,14 @@ class MainWindow(QMainWindow):
             json=payload,
             timeout=60,
         )
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                details = response.json()
+            except ValueError:
+                details = response.text
+            raise RuntimeError(
+                f"TikTok init request failed (HTTP {response.status_code}): {details}"
+            )
         data = response.json()
         error = data.get("error", {})
         if error and error.get("code") != "ok":
