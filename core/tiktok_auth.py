@@ -17,8 +17,11 @@ Prerequisites
     }
 """
 
+import hashlib
 import json
 import os
+import secrets
+import string
 import time
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -30,11 +33,18 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CREDS_PATH = os.path.join(BASE_DIR, "tiktok_credentials.json")
 TOKEN_PATH = os.path.join(BASE_DIR, "tiktok_token.json")
 
-DEFAULT_REDIRECT_URI = "http://localhost:8585/callback"
+DEFAULT_REDIRECT_URI = "http://127.0.0.1:8080/callback"
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 
 DEFAULT_SCOPES = "video.upload,video.publish"
+
+
+def _generate_pkce_pair() -> tuple[str, str]:
+    allowed = string.ascii_letters + string.digits + "-._~"
+    verifier = "".join(secrets.choice(allowed) for _ in range(64))
+    challenge = hashlib.sha256(verifier.encode("ascii")).hexdigest()
+    return verifier, challenge
 
 
 def _load_client_creds() -> dict:
@@ -62,15 +72,18 @@ def get_tiktok_oauth_settings() -> dict:
     }
 
 
-def build_tiktok_auth_url() -> tuple[str, dict]:
+def build_tiktok_auth_url() -> tuple[str, dict, str]:
     oauth_settings = get_tiktok_oauth_settings()
+    code_verifier, code_challenge = _generate_pkce_pair()
     params = {
         "client_key": oauth_settings["client_key"],
         "response_type": "code",
         "scope": oauth_settings["scopes"],
         "redirect_uri": oauth_settings["redirect_uri"],
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
-    return f"{AUTH_URL}?{urlencode(params)}", oauth_settings
+    return f"{AUTH_URL}?{urlencode(params)}", oauth_settings, code_verifier
 
 
 def wait_for_tiktok_callback(redirect_uri: str) -> str:
@@ -103,16 +116,17 @@ def wait_for_tiktok_callback(redirect_uri: str) -> str:
     return str(auth_code["code"])
 
 
-def exchange_tiktok_code_for_token(code: str) -> dict:
+def exchange_tiktok_code_for_token(code: str, code_verifier: str) -> dict:
     oauth_settings = get_tiktok_oauth_settings()
     response = requests.post(
         TOKEN_URL,
-        json={
+        data={
             "client_key": oauth_settings["client_key"],
             "client_secret": oauth_settings["client_secret"],
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": oauth_settings["redirect_uri"],
+            "code_verifier": code_verifier,
         },
         timeout=60,
     )
@@ -144,7 +158,7 @@ def _token_is_valid(token: dict) -> bool:
 
 
 def _refresh_access_token(creds: dict, token: dict) -> dict:
-    resp = requests.post(TOKEN_URL, json={
+    resp = requests.post(TOKEN_URL, data={
         "client_key": creds["client_key"],
         "client_secret": creds["client_secret"],
         "grant_type": "refresh_token",
@@ -166,12 +180,15 @@ def _authorize_via_browser(creds: dict) -> dict:
     parsed_redirect = urlparse(redirect_uri)
     redirect_host = parsed_redirect.hostname or "127.0.0.1"
     redirect_port = parsed_redirect.port or 8585
+    code_verifier, code_challenge = _generate_pkce_pair()
 
     params = {
         "client_key": creds["client_key"],
         "response_type": "code",
         "scope": scopes,
         "redirect_uri": redirect_uri,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
     url = f"{AUTH_URL}?{urlencode(params)}"
 
@@ -199,12 +216,13 @@ def _authorize_via_browser(creds: dict) -> dict:
         raise RuntimeError(f"TikTok auth failed: {auth_code.get('error', 'no code')}")
 
     # Exchange code for tokens
-    resp = requests.post(TOKEN_URL, json={
+    resp = requests.post(TOKEN_URL, data={
         "client_key": creds["client_key"],
         "client_secret": creds["client_secret"],
         "code": auth_code["code"],
         "grant_type": "authorization_code",
         "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
     })
     resp.raise_for_status()
     token_data = resp.json()

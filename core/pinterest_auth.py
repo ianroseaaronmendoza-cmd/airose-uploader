@@ -8,7 +8,6 @@ from typing import Any
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDS_PATH = os.path.join(BASE_DIR, "pinterest_credentials.json")
 DEFAULT_PINTEREST_API_BASE_URL = "https://api.pinterest.com"
-PINTEREST_SANDBOX_API_BASE_URL = "https://api-sandbox.pinterest.com"
 
 
 def _load_pinterest_creds() -> dict[str, Any]:

@@ -43,9 +43,7 @@ from core.pinterest_uploader import (
     resolve_pinterest_media_url,
     sanitize_pinterest_text,
     upload_pinterest_pin,
-    upload_pinterest_pin_with_details,
 )
-from core.pinterest_auth import PINTEREST_SANDBOX_API_BASE_URL
 from list_pinterest_boards import fetch_all_boards, write_board_file
 from refresh_pinterest_token import (
     _build_auth_url,
@@ -83,7 +81,6 @@ class MainWindow(QMainWindow):
         self._tiktok_connected = False
         self._pinterest_board_names = self._load_pinterest_board_names()
         self._pinterest_connected = False
-        self._pinterest_demo_boards: list[dict] = []
 
         self._build_ui()
         self.refresh_data()
@@ -219,37 +216,27 @@ class MainWindow(QMainWindow):
         self.upload_tt_btn = QPushButton("Upload to TikTok")
         self.upload_tt_btn.clicked.connect(self.upload_to_tiktok)
         self.upload_tt_btn.setEnabled(False)
-        self.connect_tt_btn = QPushButton("Connect TikTok")
-        self.connect_tt_btn.clicked.connect(self.connect_tiktok_for_demo)
         self.tiktok_demo_checkbox = QCheckBox("TikTok Demo Mode")
         self.tiktok_demo_checkbox.setChecked(False)
         self.tiktok_demo_checkbox.setToolTip(
-            "Simulate TikTok sign-in and upload without calling the TikTok API."
+            "Authorize with TikTok, run the real sandbox init call, then simulate only the final publish step."
         )
         self.tiktok_demo_checkbox.stateChanged.connect(self._update_tiktok_button_label)
         self.upload_igfb_btn = QPushButton("Upload to IG/FB")
         self.upload_igfb_btn.clicked.connect(self.upload_to_instagram_facebook)
         self.upload_igfb_btn.setEnabled(False)
         self.connect_pin_btn = QPushButton("Connect Pinterest")
-        self.connect_pin_btn.clicked.connect(self.connect_pinterest_for_demo)
+        self.connect_pin_btn.clicked.connect(self.connect_pinterest)
         self.upload_pin_btn = QPushButton("Upload to Pinterest")
         self.upload_pin_btn.clicked.connect(self.upload_to_pinterest)
         self.upload_pin_btn.setEnabled(False)
-        self.pinterest_demo_checkbox = QCheckBox("Pinterest Demo Mode")
-        self.pinterest_demo_checkbox.setChecked(False)
-        self.pinterest_demo_checkbox.setToolTip(
-            "Use real Pinterest OAuth and create the pin against the Pinterest API sandbox instead of production."
-        )
-        self.pinterest_demo_checkbox.stateChanged.connect(self._update_pinterest_button_label)
         btn_row.addStretch()
         btn_row.addWidget(self.save_btn)
         btn_row.addWidget(self.upload_btn)
-        btn_row.addWidget(self.connect_tt_btn)
         btn_row.addWidget(self.tiktok_demo_checkbox)
         btn_row.addWidget(self.upload_tt_btn)
         btn_row.addWidget(self.upload_igfb_btn)
         btn_row.addWidget(self.connect_pin_btn)
-        btn_row.addWidget(self.pinterest_demo_checkbox)
         btn_row.addWidget(self.upload_pin_btn)
         insp_layout.addLayout(btn_row)
 
@@ -599,16 +586,17 @@ class MainWindow(QMainWindow):
         tt_uploaded = tt_status.get("uploaded", False)
         tiktok_demo_enabled = getattr(self, "tiktok_demo_checkbox", None) and self.tiktok_demo_checkbox.isChecked()
         if tiktok_demo_enabled:
-            self.upload_tt_btn.setEnabled(True)
+            self.upload_tt_btn.setEnabled(has_video and approved)
             self.upload_tt_btn.setToolTip(
-                "Uses real TikTok sandbox OAuth and a real sandbox video/init call, then simulates the final upload result."
+                "Authorizes with TikTok sandbox as needed, performs the real init call, then simulates the final publish result."
             )
             self.tt_connection_label.setText(
-                "Connected" if self._tiktok_connected else "Not connected. Click Connect TikTok first."
+                "Authorized" if self._tiktok_connected else "Will authorize during upload."
             )
         else:
             self.upload_tt_btn.setEnabled(has_video and approved and not tt_uploaded)
             self.upload_tt_btn.setToolTip("")
+            self.tt_connection_label.setText("Authorized" if self._tiktok_connected else "Not connected")
 
         # IG/FB combined
         igfb_status = self.current_asset.upload_status.get("instagram_facebook", {})
@@ -634,41 +622,26 @@ class MainWindow(QMainWindow):
             has_pin_source = False
             pin_reason = "Unable to read metadata for Pinterest upload."
         can_upload_pin = approved and has_pin_source and not pin_uploaded
-        demo_enabled = getattr(self, "pinterest_demo_checkbox", None) and self.pinterest_demo_checkbox.isChecked()
-        if demo_enabled:
-            self.upload_pin_btn.setEnabled(True)
-            self.upload_pin_btn.setToolTip(
-                "Step 5-7 demo action: uses real OAuth + real board fetch, then uploads media and creates the pin in the Pinterest sandbox."
-            )
-            self.pin_status_label.setText(
-                "Demo mode: Connect Pinterest, then upload to the Pinterest sandbox and show the real request structure."
-            )
-        else:
-            self.upload_pin_btn.setEnabled(can_upload_pin)
-            self.upload_pin_btn.setToolTip(pin_reason)
-            self.pin_status_label.setText(pin_reason)
+        self.upload_pin_btn.setEnabled(can_upload_pin)
+        self.upload_pin_btn.setToolTip(pin_reason)
+        self.pin_status_label.setText(pin_reason)
         self._update_tiktok_button_label()
         self._update_pinterest_button_label()
 
     def _update_tiktok_button_label(self):
         demo_enabled = getattr(self, "tiktok_demo_checkbox", None) and self.tiktok_demo_checkbox.isChecked()
         if demo_enabled:
-            self.upload_tt_btn.setText("Demo TikTok Upload")
-            self.upload_tt_btn.setToolTip("Runs a clearly labeled mock TikTok auth and upload flow.")
+            self.upload_tt_btn.setText("Authorize + Demo TikTok Upload")
+            self.upload_tt_btn.setToolTip(
+                "Runs TikTok authorization if needed, calls the real sandbox init endpoint, and simulates the final publish."
+            )
         else:
             self.upload_tt_btn.setText("Upload to TikTok")
             self.upload_tt_btn.setToolTip("")
 
     def _update_pinterest_button_label(self):
-        demo_enabled = getattr(self, "pinterest_demo_checkbox", None) and self.pinterest_demo_checkbox.isChecked()
-        if demo_enabled:
-            self.upload_pin_btn.setText("Upload Pinterest Sandbox Pin")
-            self.upload_pin_btn.setToolTip(
-                "Uses real OAuth + real board fetch, then uploads media and creates the pin in the Pinterest sandbox."
-            )
-        else:
-            self.upload_pin_btn.setText("Upload to Pinterest")
-            self.upload_pin_btn.setToolTip("")
+        self.upload_pin_btn.setText("Upload to Pinterest")
+        self.upload_pin_btn.setToolTip("")
 
     def _build_tiktok_demo_dialog(self, title: str, subtitle: str) -> tuple[QDialog, QLabel, QProgressBar]:
         dialog = QDialog(self)
@@ -880,7 +853,7 @@ class MainWindow(QMainWindow):
 
     def connect_tiktok_for_demo(self) -> bool:
         try:
-            auth_url, oauth_settings = build_tiktok_auth_url()
+            auth_url, oauth_settings, code_verifier = build_tiktok_auth_url()
             redirect_uri = oauth_settings["redirect_uri"]
             scopes = oauth_settings["scopes"]
             website_url = oauth_settings.get("website_url", "") or "(missing)"
@@ -894,16 +867,16 @@ class MainWindow(QMainWindow):
             if not self._run_tiktok_sequence_step(
                 1,
                 4,
-                "Connect TikTok",
-                "Real sandbox OAuth sequence for the review recording.",
-                "Step 1: User Authenticates Via TikTok OAuth",
+                "TikTok Authorization",
+                "TikTok authorization starts automatically as part of the demo upload flow.",
+                "Step 1: Authorize TikTok Access",
                 "\n".join(
                     [
                         f"Website URL: {website_url}",
                         f"Redirect URI: {redirect_uri}",
                         f"Requested scopes: {scopes}",
                         "",
-                        "Action: click Connect TikTok, then show the TikTok login and permissions screens.",
+                        "Action: continue, then complete the TikTok login and permissions screens in the browser.",
                         "",
                         "OAuth URL:",
                         auth_url,
@@ -933,14 +906,14 @@ class MainWindow(QMainWindow):
                 return False
 
             if not callback_done.wait(timeout=180):
-                raise RuntimeError("Timed out waiting for the TikTok OAuth callback on localhost.")
+                raise RuntimeError("Timed out waiting for the TikTok OAuth callback on 127.0.0.1:8080.")
             if callback_result.get("error"):
                 raise RuntimeError(str(callback_result["error"]))
             code = str(callback_result.get("code", "")).strip()
             if not code:
                 raise RuntimeError("TikTok OAuth callback did not return an authorization code.")
 
-            token_data = exchange_tiktok_code_for_token(code)
+            token_data = exchange_tiktok_code_for_token(code, code_verifier)
             self._tiktok_connected = True
             self.tt_connection_label.setText("Connected")
 
@@ -1078,7 +1051,7 @@ class MainWindow(QMainWindow):
             button_text="Close",
         )
 
-    def _build_pinterest_demo_dialog(self, title: str, subtitle: str) -> tuple[QDialog, QVBoxLayout]:
+    def _build_pinterest_dialog(self, title: str, subtitle: str) -> tuple[QDialog, QVBoxLayout]:
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
         dialog.setModal(True)
@@ -1122,7 +1095,7 @@ class MainWindow(QMainWindow):
         card_layout.setContentsMargins(18, 18, 18, 18)
         card_layout.setSpacing(12)
 
-        brand = QLabel("Pinterest Demo Review")
+        brand = QLabel("Pinterest")
         brand.setObjectName("brand")
         card_layout.addWidget(brand)
 
@@ -1157,7 +1130,7 @@ class MainWindow(QMainWindow):
         body: str,
         button_text: str = "Continue",
     ) -> bool:
-        dialog, layout = self._build_pinterest_demo_dialog(title, subtitle)
+        dialog, layout = self._build_pinterest_dialog(title, subtitle)
 
         progress_label = QLabel(f"Step {step_number} of {total_steps}")
         progress_label.setObjectName("section")
@@ -1198,7 +1171,7 @@ class MainWindow(QMainWindow):
         thread.start()
         return thread, result, done
 
-    def connect_pinterest_for_demo(self) -> bool:
+    def connect_pinterest(self) -> bool:
         try:
             creds = _load_oauth_creds()
             state = secrets.token_urlsafe(24)
@@ -1284,15 +1257,8 @@ class MainWindow(QMainWindow):
             ):
                 return False
 
-            boards = fetch_all_boards(
-                api_base_url_override=(
-                    PINTEREST_SANDBOX_API_BASE_URL
-                    if self.pinterest_demo_checkbox.isChecked()
-                    else ""
-                )
-            )
+            boards = fetch_all_boards()
             write_board_file(boards)
-            self._pinterest_demo_boards = boards
             self._pinterest_board_names = self._load_pinterest_board_names()
             self._pinterest_connected = True
             self.pin_connection_label.setText(f"Connected. {len(boards)} boards fetched.")
@@ -1311,16 +1277,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 board_lines.append("- No boards returned")
-            board_lines.extend(
-                [
-                    "",
-                    (
-                        "Note: Demo mode uses the Pinterest sandbox for board lookup and pin creation."
-                        if self.pinterest_demo_checkbox.isChecked()
-                        else "Note: Production mode uses the live Pinterest API."
-                    ),
-                ]
-            )
+            board_lines.extend(["", "Note: Production mode uses the live Pinterest API."])
             return self._run_pinterest_sequence_step(
                 4,
                 4,
@@ -1333,90 +1290,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Pinterest Connect Failed", str(e))
             return False
-
-    def _run_pinterest_demo_upload(self, demo_data: dict, upload_args: dict):
-        if not self._pinterest_connected and not self.connect_pinterest_for_demo():
-            return
-
-        if not self._run_pinterest_sequence_step(
-            5,
-            7,
-            "Pinterest Sandbox Upload",
-            "This is the visible handoff from board selection to the sandbox upload flow.",
-            "Step 5: Select Board And Start Sandbox Upload",
-            "\n".join(
-                [
-                    f"Selected board: {demo_data['board_name']} ({demo_data['board_id']})",
-                    f"Board section: {demo_data['board_section_id']}",
-                    "",
-                    f"Sandbox API base: {PINTEREST_SANDBOX_API_BASE_URL}",
-                    "Media upload and pin creation are real sandbox calls in this demo.",
-                ]
-            ),
-            button_text="Show Upload",
-        ):
-            return
-
-        if not self._run_pinterest_sequence_step(
-            6,
-            7,
-            "Pinterest Sandbox Upload",
-            "Visible progress step before the sandbox API call is made.",
-            "Step 6: Sandbox Upload Progress",
-            "\n".join(
-                [
-                    "Uploading video to Pinterest sandbox...",
-                    "Creating pin via Pinterest sandbox API...",
-                    "",
-                    "Reviewer signal: this uses the sandbox endpoint, not production.",
-                ]
-            ),
-            button_text="Create Sandbox Pin",
-        ):
-            return
-
-        pin_id, payload, api_base_url = upload_pinterest_pin_with_details(
-            title=upload_args["title"],
-            description=upload_args["description"],
-            video_path=upload_args["video_path"],
-            media_url=upload_args["media_url"],
-            link=upload_args["link"],
-            alt_text=upload_args["alt_text"],
-            board_id=upload_args["board_id"],
-            board_section_id=upload_args["board_section_id"],
-            media_source=upload_args["media_source"],
-            cover_image_key_frame_time=upload_args.get("cover_image_key_frame_time"),
-            api_base_url_override=PINTEREST_SANDBOX_API_BASE_URL,
-        )
-
-        self._run_pinterest_sequence_step(
-            7,
-            7,
-            "Pinterest Sandbox Upload",
-            "Final sandbox request structure and success proof.",
-            "Step 7: POST /v5/pins (Sandbox)",
-            "\n".join(
-                [
-                    "Creating pin via Pinterest sandbox API:",
-                    "",
-                    json.dumps(
-                        {
-                            "api_base_url": api_base_url,
-                            "endpoint": f"{api_base_url}/v5/pins",
-                            "board_name": demo_data["board_name"],
-                            **payload,
-                            "original_media_input": demo_data["media_source"],
-                            "sandbox_pin_id": pin_id,
-                        },
-                        indent=2,
-                    ),
-                    "",
-                    "Pin successfully created in sandbox",
-                    f"Sandbox Pin ID: {pin_id}",
-                ]
-            ),
-            button_text="Finish",
-        )
 
     def upload_to_youtube(self):
         if not self.current_asset:
@@ -1564,7 +1437,6 @@ class MainWindow(QMainWindow):
                 data,
                 explicit_board_id=self.pin_board_edit.text().strip(),
             )
-            board_name = self._pinterest_board_names.get(effective_board_id, "Unknown board")
             pinterest_media_source = data.get("pinterest_media_source")
             pinterest_media_url = resolve_pinterest_media_url(
                 data,
@@ -1577,42 +1449,6 @@ class MainWindow(QMainWindow):
                 or ""
             )
             pinterest_alt_text = self.pin_alt_text_edit.text().strip() or normalized_description
-            if self.pinterest_demo_checkbox.isChecked():
-                self._run_pinterest_demo_upload(
-                    {
-                        "board_id": effective_board_id or "(unresolved)",
-                        "board_name": board_name,
-                        "board_section_id": self.pin_section_edit.text().strip() or "(none)",
-                        "title": pinterest_title or "(empty)",
-                        "description": pinterest_description or "(empty)",
-                        "link": pinterest_link or "(missing)",
-                        "alt_text": pinterest_alt_text or "(empty)",
-                        "media_source": (
-                            json.dumps(pinterest_media_source, indent=2)
-                            if isinstance(pinterest_media_source, dict)
-                            else pinterest_media_url
-                            or self.current_asset.video_path
-                            or "(missing)"
-                        ),
-                    },
-                    {
-                        "title": pinterest_title,
-                        "description": pinterest_description,
-                        "video_path": self.current_asset.video_path,
-                        "media_url": pinterest_media_url,
-                        "link": pinterest_link,
-                        "alt_text": pinterest_alt_text,
-                        "board_id": effective_board_id,
-                        "board_section_id": self.pin_section_edit.text().strip(),
-                        "media_source": (
-                            pinterest_media_source
-                            if isinstance(pinterest_media_source, dict)
-                            else None
-                        ),
-                        "cover_image_key_frame_time": data.get("pinterest_cover_image_key_frame_time"),
-                    },
-                )
-                return
             pin_id = upload_pinterest_pin(
                 title=pinterest_title,
                 description=pinterest_description,

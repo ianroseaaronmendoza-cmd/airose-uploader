@@ -15,14 +15,14 @@ on:
   schedule:
     # GitHub Actions cron uses UTC. Runs every 6.15 hours (6 hours 9 minutes)
     # Each schedule slot uses a different preset:
-    # 00:00 UTC -> faith preset
-    # 06:09 UTC -> love preset
-    # 12:18 UTC -> sentimental preset
-    # 18:27 UTC -> neutral preset
-    - cron: "0 0 * * *"
-    - cron: "9 6 * * *"
-    - cron: "18 12 * * *"
-    - cron: "27 18 * * *"
+    # 00:03 UTC -> faith preset
+    # 06:12 UTC -> love preset
+    # 12:21 UTC -> sentimental preset
+    # 18:30 UTC -> neutral preset
+    - cron: "3 0 * * *"
+    - cron: "12 6 * * *"
+    - cron: "21 12 * * *"
+    - cron: "30 18 * * *"
 
 permissions:
   contents: write
