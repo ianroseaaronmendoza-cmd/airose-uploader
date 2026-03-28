@@ -35,6 +35,16 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+def _parse_retry_after_seconds(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
 def sanitize_pinterest_text(text: str) -> str:
     cleaned = re.sub(r"(^|\s)#[A-Za-z0-9_]+", " ", text or "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -508,23 +518,41 @@ def upload_pinterest_pin_with_details(
         cover_image_key_frame_time=cover_image_key_frame_time,
     )
 
-    response = requests.post(
-        f"{config['api_base_url']}/v5/pins",
-        headers={
-            "Authorization": f"Bearer {config['access_token']}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=120,
-    )
-    if not response.ok:
+    last_error: RuntimeError | None = None
+    response = None
+    for attempt in range(3):
+        response = requests.post(
+            f"{config['api_base_url']}/v5/pins",
+            headers={
+                "Authorization": f"Bearer {config['access_token']}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=120,
+        )
+        if response.ok:
+            break
+
         try:
             details = response.json()
         except ValueError:
             details = response.text
-        raise RuntimeError(
+
+        last_error = RuntimeError(
             f"Pinterest pin creation failed (HTTP {response.status_code}): {details}"
         )
+        should_retry = response.status_code in {429, 500, 502, 503, 504}
+        if not should_retry or attempt == 2:
+            raise last_error
+
+        retry_after_seconds = _parse_retry_after_seconds(
+            response.headers.get("Retry-After")
+        )
+        sleep_seconds = retry_after_seconds if retry_after_seconds is not None else 2.0 * (attempt + 1)
+        time.sleep(sleep_seconds)
+
+    if response is None:
+        raise last_error or RuntimeError("Pinterest pin creation did not return a response.")
 
     data = response.json()
     pin_id = data.get("id")
