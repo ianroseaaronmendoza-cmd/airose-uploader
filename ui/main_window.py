@@ -40,6 +40,7 @@ from core.pinterest_uploader import (
     explain_pinterest_readiness,
     has_pinterest_media_source,
     resolve_pinterest_board_id,
+    resolve_pinterest_link,
     resolve_pinterest_media_url,
     sanitize_pinterest_text,
     upload_pinterest_pin,
@@ -1458,9 +1459,7 @@ class MainWindow(QMainWindow):
             ) or ""
             pinterest_link = (
                 self.pin_link_edit.text().strip()
-                or data.get("public_video_url")
-                or data.get("youtube_video_url")
-                or ""
+                or resolve_pinterest_link(data)
             )
             pinterest_alt_text = self.pin_alt_text_edit.text().strip() or normalized_description
             pin_id = upload_pinterest_pin(

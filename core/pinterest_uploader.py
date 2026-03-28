@@ -75,6 +75,8 @@ def _normalize_pinterest_link(link: str) -> str:
     path = parsed.path.lower()
     query = parse_qs(parsed.query)
 
+    if host.endswith("drive.google.com") or host.endswith("drive.usercontent.google.com"):
+        return ""
     if query.get("alt", [""])[0].lower() == "media":
         return ""
     if host.endswith("drive.google.com") and path == "/uc" and query.get("export", [""])[0].lower() == "download":
@@ -85,6 +87,19 @@ def _normalize_pinterest_link(link: str) -> str:
         return ""
 
     return candidate
+
+
+def resolve_pinterest_link(data: dict[str, Any]) -> str:
+    return _normalize_pinterest_link(
+        _first_non_empty(
+            data.get("pinterest_link"),
+            data.get("youtube_video_url"),
+            data.get("public_video_url"),
+            data.get("instagram_video_url"),
+            data.get("google_drive_link"),
+            data.get("google_drive_url"),
+        )
+    )
 
 
 def has_pinterest_media_source(data: dict[str, Any], video_path: str = "") -> bool:

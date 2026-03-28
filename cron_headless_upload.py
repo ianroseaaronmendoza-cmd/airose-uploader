@@ -21,6 +21,7 @@ from core.meta_uploader import upload_instagram_facebook_video
 from core.pinterest_uploader import (
     explain_pinterest_readiness,
     resolve_pinterest_board_id,
+    resolve_pinterest_link,
     resolve_pinterest_media_url,
     sanitize_pinterest_text,
     upload_pinterest_pin,
@@ -584,10 +585,7 @@ def main() -> int:
                     video_path=asset.video_path,
                 )
                 pinterest_media_source = data.get("pinterest_media_source")
-                pinterest_link = _get_first_non_empty(
-                    data,
-                    ("pinterest_link", "public_video_url", "youtube_video_url"),
-                ) or ""
+                pinterest_link = resolve_pinterest_link(data)
                 pinterest_link_host = _describe_url_host(pinterest_link)
                 pinterest_media_host = _describe_url_host(pinterest_media_url or "")
                 pinterest_media_origin = (
