@@ -74,6 +74,7 @@ It supports:
   - `pinterest_only` (`true/false`) to force a Pinterest-only run via checkbox
   - `dry_run` (`true/false`)
 - Each scheduled run picks exactly one approved asset at random for that run's preset and uses that same asset for the selected platforms in that run.
+- When multiple assets match a preset, the scheduler now prioritizes assets with the most pending selected platforms first. This avoids all-platform runs randomly picking assets that only still need Pinterest while YouTube/IG-FB-ready assets are still available.
 
 Drive-backed mode:
 

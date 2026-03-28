@@ -123,6 +123,17 @@ def _needs_pinterest_upload(data: dict) -> bool:
     )
 
 
+def _get_pending_selected_platforms(data: dict, selected_platforms: set[str]) -> set[str]:
+    pending: set[str] = set()
+    if "youtube" in selected_platforms and _needs_youtube_upload(data):
+        pending.add("youtube")
+    if "igfb" in selected_platforms and _needs_igfb_upload(data):
+        pending.add("igfb")
+    if "pinterest" in selected_platforms and _needs_pinterest_upload(data):
+        pending.add("pinterest")
+    return pending
+
+
 def _extract_google_drive_file_id(url: str) -> str | None:
     parsed = urlparse(url)
     host = parsed.netloc.lower()
@@ -365,16 +376,18 @@ def main() -> int:
         )
         print(f"Target preset for this run: {target_preset}")
 
-        candidate_assets = []
+        candidate_assets: list[tuple] = []
+        max_pending_count = 0
         for asset in assets:
             if asset.error_state:
                 continue
             if not _is_approved_for_upload({"upload_status": asset.upload_status}):
                 continue
-            if not _has_pending_selected_platforms(
+            pending_platforms = _get_pending_selected_platforms(
                 {"upload_status": asset.upload_status},
                 selected_platforms,
-            ):
+            )
+            if not pending_platforms:
                 continue
 
             # Load metadata to check preset
@@ -382,13 +395,24 @@ def main() -> int:
                 data = _load_json(asset.metadata_path)
                 asset_preset = data.get("preset", "").strip().lower()
                 if asset_preset == target_preset.lower():
-                    candidate_assets.append(asset)
+                    pending_count = len(pending_platforms)
+                    max_pending_count = max(max_pending_count, pending_count)
+                    candidate_assets.append((asset, pending_platforms))
             except Exception:
                 continue
-        
-        print(f"Random selection candidates with preset '{target_preset}': {len(candidate_assets)}")
-        if candidate_assets:
-            selected_asset = random.SystemRandom().choice(candidate_assets)
+
+        prioritized_assets = [
+            asset
+            for asset, pending_platforms in candidate_assets
+            if len(pending_platforms) == max_pending_count
+        ]
+        print(
+            f"Random selection candidates with preset '{target_preset}': "
+            f"{len(candidate_assets)} total, {len(prioritized_assets)} prioritized "
+            f"with {max_pending_count} pending selected platform(s)"
+        )
+        if prioritized_assets:
+            selected_asset = random.SystemRandom().choice(prioritized_assets)
             print(f"Randomly selected asset: {selected_asset.id}")
             assets = [selected_asset]
         else:
