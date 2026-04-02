@@ -1,14 +1,19 @@
 # GitHub Scheduled Upload Setup (YouTube + IG/FB + Pinterest)
 
-## 1. One-time local auth (YouTube)
+## 1. One-time local auth (YouTube + Pinterest)
 
 Run this locally once:
 
 ```powershell
 python refresh_youtube_token.py
+python refresh_pinterest_token.py
 ```
 
-This creates/updates `token.pkl` with your refresh token.
+This creates/updates:
+
+- `token.pkl` for YouTube refresh
+- `pinterest_oauth_token.json` for Pinterest refresh
+- `pinterest_credentials.json` with the latest Pinterest access token
 
 ## 2. Create GitHub Secrets (base64)
 
@@ -19,6 +24,9 @@ From PowerShell in project root
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("credentials.json"))
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("token.pkl"))
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("meta_credentials.json"))
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("pinterest_credentials.json"))
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("pinterest_oauth_credentials.json"))
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("pinterest_oauth_token.json"))
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("google_service_account.json"))
 ```
 
@@ -27,15 +35,20 @@ Add these as repository secrets:
 - `YOUTUBE_CREDENTIALS_JSON_B64`
 - `YOUTUBE_TOKEN_PKL_B64`
 - `META_CREDENTIALS_JSON_B64`
+- `PINTEREST_CREDENTIALS_JSON_B64`
+- `PINTEREST_OAUTH_CREDENTIALS_JSON_B64`
+- `PINTEREST_OAUTH_TOKEN_JSON_B64`
 - `GOOGLE_SERVICE_ACCOUNT_JSON_B64` (required when syncing metadata/video folders from Google Drive)
-- `ALERT_WEBHOOK_URL` (optional webhook for YouTube auth failure alerts)
+- `ALERT_WEBHOOK_URL` (optional webhook for YouTube/Pinterest auth failure alerts)
 
 Notes:
 
 - `YOUTUBE_TOKEN_PKL_B64` must be the full single-line base64 value.
 - The JSON-based secrets can be stored either as the full single-line base64 value or as raw JSON text.
-- If `ALERT_WEBHOOK_URL` is set, the workflow sends a JSON webhook when YouTube auth refresh or channel validation fails.
-- The workflow also writes the YouTube auth output to `.runtime/logs/youtube_auth.log` and adds a GitHub Actions step summary entry on failure.
+- `PINTEREST_OAUTH_TOKEN_JSON_B64` should come from `pinterest_oauth_token.json` after a successful local `python refresh_pinterest_token.py` run so it includes the latest `refresh_token`.
+- If `ALERT_WEBHOOK_URL` is set, the workflow sends a JSON webhook when YouTube or Pinterest auth refresh fails.
+- The workflow now refreshes Pinterest non-interactively before upload when Pinterest is selected. If the Pinterest OAuth secrets are missing or the refresh fails, the run removes `pinterest` from the platform list and emits a step summary entry.
+- The workflow also writes auth output to `.runtime/logs/youtube_auth.log` and `.runtime/logs/pinterest_auth.log`, and adds a GitHub Actions step summary entry on failure.
 
 ## 3. Set GitHub Variables
 
@@ -101,5 +114,6 @@ Source video URL can come from any of:
 
 - TikTok is untouched.
 - YouTube runs non-interactive by default in CI (no browser popup).
+- Pinterest now refreshes non-interactively in CI using `pinterest_oauth_credentials.json` + `pinterest_oauth_token.json`.
 - IG/FB system token is used as-is from `meta_credentials.json`.
 - For CI, set `google_service_account_json` in `meta_credentials.json` to `google_service_account.json`.

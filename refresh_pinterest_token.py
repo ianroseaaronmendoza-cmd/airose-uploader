@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -32,6 +33,12 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return data
+
+
+def _load_token_cache() -> dict[str, Any] | None:
+    if not TOKEN_CACHE_PATH.exists():
+        return None
+    return _load_json(TOKEN_CACHE_PATH)
 
 
 def _load_oauth_creds() -> dict[str, Any]:
@@ -192,6 +199,36 @@ def _exchange_code_for_token(creds: dict[str, Any], code: str) -> dict[str, Any]
     return data
 
 
+def _exchange_refresh_token(creds: dict[str, Any], refresh_token: str) -> dict[str, Any]:
+    basic = base64.b64encode(
+        f"{creds['client_id']}:{creds['client_secret']}".encode("utf-8")
+    ).decode("ascii")
+    response = requests.post(
+        TOKEN_URL,
+        headers={
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        timeout=60,
+    )
+    if not response.ok:
+        try:
+            details = response.json()
+        except ValueError:
+            details = response.text
+        raise RuntimeError(
+            f"Pinterest token refresh failed (HTTP {response.status_code}): {details}"
+        )
+    data = response.json()
+    if not isinstance(data, dict) or not str(data.get("access_token", "")).strip():
+        raise RuntimeError(f"Pinterest refresh response missing access_token: {data}")
+    return data
+
+
 def _update_pinterest_access_token(access_token: str) -> None:
     current: dict[str, Any] = {}
     if PINTEREST_CREDS_PATH.exists():
@@ -206,30 +243,99 @@ def _save_token_cache(token_data: dict[str, Any]) -> None:
         json.dump(token_data, f, indent=2)
 
 
-def main() -> int:
+def _merge_token_data(token_data: dict[str, Any], previous_token_data: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(previous_token_data or {})
+    merged.update(token_data)
+    if previous_token_data and not str(merged.get("refresh_token", "")).strip():
+        merged["refresh_token"] = str(previous_token_data.get("refresh_token", "")).strip()
+
+    refresh_expires_in = merged.get("refresh_token_expires_in")
+    if refresh_expires_in not in (None, ""):
+        try:
+            merged["refresh_token_expires_at"] = int(time.time()) + int(refresh_expires_in)
+        except (TypeError, ValueError):
+            pass
+
+    access_expires_in = merged.get("expires_in")
+    if access_expires_in not in (None, ""):
+        try:
+            merged["access_token_expires_at"] = int(time.time()) + int(access_expires_in)
+        except (TypeError, ValueError):
+            pass
+
+    return merged
+
+
+def _refresh_saved_token_non_interactive() -> dict[str, Any]:
     creds = _load_oauth_creds()
-    state = secrets.token_urlsafe(24)
-    auth_url = _build_auth_url(creds, state)
+    existing_token_data = _load_token_cache()
+    if not existing_token_data:
+        raise RuntimeError(
+            f"Missing {TOKEN_CACHE_PATH.name}. Run interactive Pinterest OAuth locally first."
+        )
 
-    print("Pinterest re-OAuth starting")
-    print(f"Redirect URI: {creds['redirect_uri']}")
-    print(f"Scopes: {', '.join(creds['scopes'])}")
-    print()
-    print("Open this URL if the browser does not launch automatically:")
-    print(auth_url)
-    print()
+    refresh_token = str(existing_token_data.get("refresh_token", "")).strip()
+    if not refresh_token:
+        raise RuntimeError(
+            f"{TOKEN_CACHE_PATH.name} does not include refresh_token. Re-run interactive Pinterest OAuth locally."
+        )
 
-    opened = webbrowser.open(auth_url, new=1, autoraise=True)
-    if not opened:
-        print("Browser auto-open failed. Paste the URL above into your browser.", file=sys.stderr)
+    refreshed_token_data = _exchange_refresh_token(creds, refresh_token)
+    merged_token_data = _merge_token_data(refreshed_token_data, existing_token_data)
+    _save_token_cache(merged_token_data)
+    _update_pinterest_access_token(str(merged_token_data["access_token"]))
+    return merged_token_data
 
-    code = _wait_for_callback(creds["redirect_uri"], state)
-    token_data = _exchange_code_for_token(creds, code)
-    _save_token_cache(token_data)
-    _update_pinterest_access_token(str(token_data["access_token"]))
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Refresh Pinterest credentials interactively or via a saved refresh token."
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Refresh using the saved refresh_token only; do not open a browser.",
+    )
+    args = parser.parse_args()
+
+    try:
+        if args.no_interactive:
+            token_data = _refresh_saved_token_non_interactive()
+            print("Pinterest token refresh successful.")
+        else:
+            creds = _load_oauth_creds()
+            state = secrets.token_urlsafe(24)
+            auth_url = _build_auth_url(creds, state)
+
+            print("Pinterest re-OAuth starting")
+            print(f"Redirect URI: {creds['redirect_uri']}")
+            print(f"Scopes: {', '.join(creds['scopes'])}")
+            print()
+            print("Open this URL if the browser does not launch automatically:")
+            print(auth_url)
+            print()
+
+            opened = webbrowser.open(auth_url, new=1, autoraise=True)
+            if not opened:
+                print("Browser auto-open failed. Paste the URL above into your browser.", file=sys.stderr)
+
+            code = _wait_for_callback(creds["redirect_uri"], state)
+            token_data = _merge_token_data(
+                _exchange_code_for_token(creds, code),
+                _load_token_cache(),
+            )
+            _save_token_cache(token_data)
+            _update_pinterest_access_token(str(token_data["access_token"]))
+            print("Pinterest token updated successfully.")
+    except Exception as exc:
+        print("Pinterest token refresh failed.")
+        print(f"Reason: {exc}")
+        print(f"Interactive allowed: {not args.no_interactive}")
+        print(f"OAuth creds file exists: {OAUTH_CREDS_PATH.exists()}")
+        print(f"Token cache file exists: {TOKEN_CACHE_PATH.exists()}")
+        return 1
 
     granted_scopes = token_data.get("scope")
-    print("Pinterest token updated successfully.")
     if granted_scopes:
         print(f"Granted scopes: {granted_scopes}")
     print(f"Saved access token to {PINTEREST_CREDS_PATH}")

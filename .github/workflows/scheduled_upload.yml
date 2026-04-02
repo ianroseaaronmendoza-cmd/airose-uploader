@@ -65,6 +65,8 @@ jobs:
           YOUTUBE_TOKEN_PKL_B64: ${{ secrets.YOUTUBE_TOKEN_PKL_B64 }}
           META_CREDENTIALS_JSON_B64: ${{ secrets.META_CREDENTIALS_JSON_B64 }}
           PINTEREST_CREDENTIALS_JSON_B64: ${{ secrets.PINTEREST_CREDENTIALS_JSON_B64 }}
+          PINTEREST_OAUTH_CREDENTIALS_JSON_B64: ${{ secrets.PINTEREST_OAUTH_CREDENTIALS_JSON_B64 }}
+          PINTEREST_OAUTH_TOKEN_JSON_B64: ${{ secrets.PINTEREST_OAUTH_TOKEN_JSON_B64 }}
           GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: |
@@ -82,6 +84,8 @@ jobs:
               "PINTEREST_CREDENTIALS_JSON_B64": ("pinterest_credentials.json", "json"),
           }
           optional_mappings = {
+              "PINTEREST_OAUTH_CREDENTIALS_JSON_B64": ("pinterest_oauth_credentials.json", "json"),
+              "PINTEREST_OAUTH_TOKEN_JSON_B64": ("pinterest_oauth_token.json", "json"),
               "GOOGLE_SERVICE_ACCOUNT_JSON_B64": ("google_service_account.json", "json"),
           }
 
@@ -195,9 +199,13 @@ jobs:
           PINTEREST_ONLY_INPUT="${{ github.event.inputs.pinterest_only }}"
           mkdir -p .runtime/logs
           YT_AUTH_LOG=".runtime/logs/youtube_auth.log"
+          PIN_AUTH_LOG=".runtime/logs/pinterest_auth.log"
           : > "$YT_AUTH_LOG"
+          : > "$PIN_AUTH_LOG"
           YOUTUBE_AUTH_FAILED="false"
           YOUTUBE_AUTH_REASON=""
+          PINTEREST_AUTH_FAILED="false"
+          PINTEREST_AUTH_REASON=""
 
           if [ -z "$PLATFORMS_INPUT" ]; then
             PLATFORMS_INPUT="$DEFAULT_PLATFORMS"
@@ -241,14 +249,58 @@ jobs:
             echo "YouTube not selected; skipping auth checks."
           fi
 
+          if [[ ",$EFFECTIVE_PLATFORMS," == *",pinterest,"* ]]; then
+            if [ ! -f "pinterest_oauth_credentials.json" ] || [ ! -f "pinterest_oauth_token.json" ]; then
+              PINTEREST_AUTH_FAILED="true"
+              PINTEREST_AUTH_REASON="oauth_refresh_config_missing"
+              echo "::error::Pinterest OAuth refresh config missing. Add PINTEREST_OAUTH_CREDENTIALS_JSON_B64 and PINTEREST_OAUTH_TOKEN_JSON_B64."
+              echo "Pinterest auth refresh config missing; removing pinterest from this run."
+              {
+                echo "## Pinterest Auth Failure"
+                echo
+                echo "- Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                echo "- Reason: oauth_refresh_config_missing"
+                echo "- Action: update \`PINTEREST_OAUTH_CREDENTIALS_JSON_B64\` and \`PINTEREST_OAUTH_TOKEN_JSON_B64\`"
+                echo "- Log: \`$PIN_AUTH_LOG\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'pinterest'))" "$EFFECTIVE_PLATFORMS")
+            else
+              set +e
+              python refresh_pinterest_token.py --no-interactive 2>&1 | tee -a "$PIN_AUTH_LOG"
+              PIN_REFRESH_EXIT=${PIPESTATUS[0]}
+              set -e
+
+              if [ $PIN_REFRESH_EXIT -ne 0 ]; then
+                PINTEREST_AUTH_FAILED="true"
+                PINTEREST_AUTH_REASON="refresh_failed"
+                echo "::error::Pinterest auth refresh failed. Update pinterest_oauth_token.json / PINTEREST_OAUTH_TOKEN_JSON_B64."
+                echo "Pinterest auth failed; removing pinterest from this run."
+                {
+                  echo "## Pinterest Auth Failure"
+                  echo
+                  echo "- Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                  echo "- Reason: refresh_failed"
+                  echo "- Action: run local Pinterest OAuth again and update \`PINTEREST_OAUTH_TOKEN_JSON_B64\`"
+                  echo "- Log: \`$PIN_AUTH_LOG\`"
+                } >> "$GITHUB_STEP_SUMMARY"
+                EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'pinterest'))" "$EFFECTIVE_PLATFORMS")
+              fi
+            fi
+          else
+            echo "Pinterest not selected; skipping auth refresh."
+          fi
+
           if [ -z "$EFFECTIVE_PLATFORMS" ]; then
-            echo "No runnable platforms remain after YouTube auth fallback."
+            echo "No runnable platforms remain after auth fallback."
             exit 1
           fi
 
           echo "YOUTUBE_AUTH_FAILED=$YOUTUBE_AUTH_FAILED" >> "$GITHUB_ENV"
           echo "YOUTUBE_AUTH_REASON=$YOUTUBE_AUTH_REASON" >> "$GITHUB_ENV"
           echo "YOUTUBE_AUTH_LOG=$YT_AUTH_LOG" >> "$GITHUB_ENV"
+          echo "PINTEREST_AUTH_FAILED=$PINTEREST_AUTH_FAILED" >> "$GITHUB_ENV"
+          echo "PINTEREST_AUTH_REASON=$PINTEREST_AUTH_REASON" >> "$GITHUB_ENV"
+          echo "PINTEREST_AUTH_LOG=$PIN_AUTH_LOG" >> "$GITHUB_ENV"
           echo "EFFECTIVE_PLATFORMS=$EFFECTIVE_PLATFORMS" >> "$GITHUB_ENV"
           echo "Effective platforms: $EFFECTIVE_PLATFORMS"
 
@@ -304,6 +356,36 @@ jobs:
               ),
               "workflow": "Scheduled Upload (Headless)",
               "reason": os.environ.get("YOUTUBE_AUTH_REASON", "unknown"),
+              "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "server_url": os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+          }
+          req = urllib.request.Request(
+              webhook_url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              print(f"Alert webhook responded with HTTP {resp.status}")
+          PY
+
+      - name: Notify Pinterest Auth Failure
+        if: ${{ env.PINTEREST_AUTH_FAILED == 'true' && env.ALERT_WEBHOOK_URL != '' }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          webhook_url = os.environ["ALERT_WEBHOOK_URL"].strip()
+          payload = {
+              "text": (
+                  "Pinterest auth refresh failed in scheduled_upload.yml. "
+                  "Run local Pinterest OAuth again and update the PINTEREST_OAUTH_TOKEN_JSON_B64 GitHub secret."
+              ),
+              "workflow": "Scheduled Upload (Headless)",
+              "reason": os.environ.get("PINTEREST_AUTH_REASON", "unknown"),
               "repository": os.environ.get("GITHUB_REPOSITORY", ""),
               "run_id": os.environ.get("GITHUB_RUN_ID", ""),
               "server_url": os.environ.get("GITHUB_SERVER_URL", "https://github.com"),

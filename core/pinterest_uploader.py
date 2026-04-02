@@ -27,6 +27,8 @@ PINTEREST_THEME_BOARD_IDS = {
     "love": "1142366330421257919",
 }
 
+_URL_LIKE_PATTERN = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
+
 
 def _first_non_empty(*values: Any) -> str:
     for value in values:
@@ -46,7 +48,8 @@ def _parse_retry_after_seconds(value: Any) -> float | None:
 
 
 def sanitize_pinterest_text(text: str) -> str:
-    cleaned = re.sub(r"(^|\s)#[A-Za-z0-9_]+", " ", text or "")
+    cleaned = _URL_LIKE_PATTERN.sub(" ", text or "")
+    cleaned = re.sub(r"(^|\s)#[A-Za-z0-9_]+", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
     return cleaned
@@ -478,18 +481,24 @@ def _build_pinterest_pin_payload(
             "or `pinterest_board_id` in metadata."
         )
 
+    sanitized_title = sanitize_pinterest_text(title).strip()
+    sanitized_description = sanitize_pinterest_text(description).strip()
+    sanitized_alt_text = sanitize_pinterest_text(alt_text).strip()
     effective_section_id = _first_non_empty(
         board_section_id,
         config.get("board_section_id"),
     )
+    effective_media_url = ""
+    if not (video_path and os.path.isfile(video_path)):
+        effective_media_url = media_url
     payload: dict[str, Any] = {
         "board_id": effective_board_id,
-        "title": title.strip(),
-        "description": description.strip(),
+        "title": sanitized_title,
+        "description": sanitized_description,
         "media_source": _build_media_source(
             config,
             video_path=video_path,
-            media_url=media_url,
+            media_url=effective_media_url,
             explicit_media_source=media_source,
             cover_image_key_frame_time=cover_image_key_frame_time,
         ),
@@ -500,9 +509,40 @@ def _build_pinterest_pin_payload(
     normalized_link = _normalize_pinterest_link(link)
     if normalized_link:
         payload["link"] = normalized_link
-    if alt_text.strip():
-        payload["alt_text"] = alt_text.strip()
+    if sanitized_alt_text:
+        payload["alt_text"] = sanitized_alt_text
     return payload
+
+
+def _extract_pinterest_error_message(details: Any) -> str:
+    if isinstance(details, dict):
+        return str(details.get("message", "")).strip()
+    return str(details).strip()
+
+
+def _is_site_save_block_error(status_code: int, details: Any) -> bool:
+    if status_code != 400:
+        return False
+    message = _extract_pinterest_error_message(details).lower()
+    return "doesn't allow you to save pins" in message
+
+
+def _build_site_safe_retry_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    retry_payload = dict(payload)
+    retry_payload.pop("link", None)
+
+    retry_payload["title"] = sanitize_pinterest_text(str(retry_payload.get("title", ""))).strip()
+    retry_payload["description"] = sanitize_pinterest_text(
+        str(retry_payload.get("description", ""))
+    ).strip()
+
+    alt_text = sanitize_pinterest_text(str(retry_payload.get("alt_text", ""))).strip()
+    if alt_text:
+        retry_payload["alt_text"] = alt_text
+    else:
+        retry_payload.pop("alt_text", None)
+
+    return retry_payload
 
 
 def upload_pinterest_pin_with_details(
@@ -532,39 +572,53 @@ def upload_pinterest_pin_with_details(
         media_source=media_source,
         cover_image_key_frame_time=cover_image_key_frame_time,
     )
+    retry_payload = _build_site_safe_retry_payload(payload)
+    payload_variants = [payload]
+    if retry_payload != payload:
+        payload_variants.append(retry_payload)
 
     last_error: RuntimeError | None = None
     response = None
-    for attempt in range(3):
-        response = requests.post(
-            f"{config['api_base_url']}/v5/pins",
-            headers={
-                "Authorization": f"Bearer {config['access_token']}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=120,
-        )
-        if response.ok:
+    payload_used = payload
+    for variant_index, candidate_payload in enumerate(payload_variants):
+        payload_used = candidate_payload
+        for attempt in range(3):
+            response = requests.post(
+                f"{config['api_base_url']}/v5/pins",
+                headers={
+                    "Authorization": f"Bearer {config['access_token']}",
+                    "Content-Type": "application/json",
+                },
+                json=candidate_payload,
+                timeout=120,
+            )
+            if response.ok:
+                break
+
+            try:
+                details = response.json()
+            except ValueError:
+                details = response.text
+
+            last_error = RuntimeError(
+                f"Pinterest pin creation failed (HTTP {response.status_code}): {details}"
+            )
+            site_block_error = _is_site_save_block_error(response.status_code, details)
+            if site_block_error and variant_index == 0 and len(payload_variants) > 1:
+                break
+
+            should_retry = response.status_code in {429, 500, 502, 503, 504} or site_block_error
+            if not should_retry or attempt == 2:
+                raise last_error
+
+            retry_after_seconds = _parse_retry_after_seconds(
+                response.headers.get("Retry-After")
+            )
+            sleep_seconds = retry_after_seconds if retry_after_seconds is not None else 2.0 * (attempt + 1)
+            time.sleep(sleep_seconds)
+
+        if response is not None and response.ok:
             break
-
-        try:
-            details = response.json()
-        except ValueError:
-            details = response.text
-
-        last_error = RuntimeError(
-            f"Pinterest pin creation failed (HTTP {response.status_code}): {details}"
-        )
-        should_retry = response.status_code in {429, 500, 502, 503, 504}
-        if not should_retry or attempt == 2:
-            raise last_error
-
-        retry_after_seconds = _parse_retry_after_seconds(
-            response.headers.get("Retry-After")
-        )
-        sleep_seconds = retry_after_seconds if retry_after_seconds is not None else 2.0 * (attempt + 1)
-        time.sleep(sleep_seconds)
 
     if response is None:
         raise last_error or RuntimeError("Pinterest pin creation did not return a response.")
@@ -573,7 +627,7 @@ def upload_pinterest_pin_with_details(
     pin_id = data.get("id")
     if not pin_id:
         raise RuntimeError(f"Pinterest response missing pin id: {data}")
-    return str(pin_id), payload, str(config["api_base_url"])
+    return str(pin_id), payload_used, str(config["api_base_url"])
 
 
 def upload_pinterest_pin(
