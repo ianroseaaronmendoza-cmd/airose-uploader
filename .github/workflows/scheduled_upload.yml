@@ -38,6 +38,7 @@ jobs:
     env:
       UPLOADER_METADATA_FOLDER: ${{ vars.UPLOADER_METADATA_FOLDER }}
       UPLOADER_VIDEO_FOLDER: ${{ vars.UPLOADER_VIDEO_FOLDER }}
+      GOOGLE_DRIVE_AUTH_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_AUTH_FOLDER_URL }}
       GOOGLE_DRIVE_METADATA_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_METADATA_FOLDER_URL }}
       GOOGLE_DRIVE_VIDEO_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_VIDEO_FOLDER_URL }}
       DRIVE_SERVICE_ACCOUNT_PATH: google_service_account.json
@@ -68,6 +69,7 @@ jobs:
           PINTEREST_OAUTH_CREDENTIALS_JSON_B64: ${{ secrets.PINTEREST_OAUTH_CREDENTIALS_JSON_B64 }}
           PINTEREST_OAUTH_TOKEN_JSON_B64: ${{ secrets.PINTEREST_OAUTH_TOKEN_JSON_B64 }}
           GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
+          GOOGLE_DRIVE_AUTH_FOLDER_URL: ${{ vars.GOOGLE_DRIVE_AUTH_FOLDER_URL }}
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: |
           python - <<'PY'
@@ -77,10 +79,12 @@ jobs:
           import os
           from pathlib import Path
 
-          mappings = {
+          required_mappings = {
               "YOUTUBE_CREDENTIALS_JSON_B64": ("credentials.json", "json"),
-              "YOUTUBE_TOKEN_PKL_B64": ("token.pkl", "binary"),
               "META_CREDENTIALS_JSON_B64": ("meta_credentials.json", "json"),
+          }
+          bootstrap_mappings = {
+              "YOUTUBE_TOKEN_PKL_B64": ("token.pkl", "binary"),
               "PINTEREST_CREDENTIALS_JSON_B64": ("pinterest_credentials.json", "json"),
           }
           optional_mappings = {
@@ -88,6 +92,13 @@ jobs:
               "PINTEREST_OAUTH_TOKEN_JSON_B64": ("pinterest_oauth_token.json", "json"),
               "GOOGLE_SERVICE_ACCOUNT_JSON_B64": ("google_service_account.json", "json"),
           }
+
+          use_drive_auth_cache = bool((os.environ.get("GOOGLE_DRIVE_AUTH_FOLDER_URL") or "").strip())
+          mappings = dict(required_mappings)
+          if use_drive_auth_cache:
+              optional_mappings = {**bootstrap_mappings, **optional_mappings}
+          else:
+              mappings.update(bootstrap_mappings)
 
           def decode_secret(env_key: str, value_kind: str) -> bytes | None:
               value = (os.environ.get(env_key) or "").strip()
@@ -158,6 +169,31 @@ jobs:
           meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
           print("Updated meta_credentials.json to use google_service_account.json")
           PY
+
+      - name: Sync Auth Cache from Google Drive
+        if: ${{ env.GOOGLE_DRIVE_AUTH_FOLDER_URL != '' }}
+        shell: bash
+        run: |
+          if [ ! -f "$DRIVE_SERVICE_ACCOUNT_PATH" ]; then
+            echo "GOOGLE_SERVICE_ACCOUNT_JSON_B64 secret is required for Google Drive auth cache sync."
+            exit 1
+          fi
+
+          AUTH_CACHE_DIR="$GITHUB_WORKSPACE/.runtime/auth-cache"
+          mkdir -p "$AUTH_CACHE_DIR"
+          python drive_folder_sync.py pull \
+            --folder-url "$GOOGLE_DRIVE_AUTH_FOLDER_URL" \
+            --dest "$AUTH_CACHE_DIR" \
+            --service-account-json "$DRIVE_SERVICE_ACCOUNT_PATH" \
+            --extensions .json,.pkl \
+            --clear-dest
+
+          for name in token.pkl pinterest_credentials.json pinterest_oauth_credentials.json pinterest_oauth_token.json; do
+            if [ -f "$AUTH_CACHE_DIR/$name" ]; then
+              cp "$AUTH_CACHE_DIR/$name" "$GITHUB_WORKSPACE/$name"
+              echo "Restored $name from Google Drive auth cache."
+            fi
+          done
 
       - name: Sync Google Drive Folders
         if: ${{ env.GOOGLE_DRIVE_METADATA_FOLDER_URL != '' || env.GOOGLE_DRIVE_VIDEO_FOLDER_URL != '' }}
@@ -415,6 +451,37 @@ jobs:
           fi
 
           python cron_headless_upload.py --random-one --platforms "$EFFECTIVE_PLATFORMS" $PRESET_ARGS $EXTRA_ARGS
+
+      - name: Persist Auth Cache to Google Drive
+        if: ${{ always() && env.GOOGLE_DRIVE_AUTH_FOLDER_URL != '' }}
+        shell: bash
+        run: |
+          if [ ! -f "$DRIVE_SERVICE_ACCOUNT_PATH" ]; then
+            echo "GOOGLE_SERVICE_ACCOUNT_JSON_B64 secret is required for Google Drive auth cache sync."
+            exit 1
+          fi
+
+          AUTH_CACHE_DIR="$GITHUB_WORKSPACE/.runtime/auth-cache"
+          mkdir -p "$AUTH_CACHE_DIR"
+          find "$AUTH_CACHE_DIR" -maxdepth 1 -type f \( -name '*.json' -o -name '*.pkl' \) -delete
+
+          for name in token.pkl pinterest_credentials.json pinterest_oauth_credentials.json pinterest_oauth_token.json; do
+            if [ -f "$GITHUB_WORKSPACE/$name" ]; then
+              cp "$GITHUB_WORKSPACE/$name" "$AUTH_CACHE_DIR/$name"
+              echo "Prepared $name for Google Drive auth cache sync."
+            fi
+          done
+
+          if ! find "$AUTH_CACHE_DIR" -maxdepth 1 -type f \( -name '*.json' -o -name '*.pkl' \) | grep -q .; then
+            echo "No auth cache files available to sync."
+            exit 0
+          fi
+
+          python drive_folder_sync.py push \
+            --folder-url "$GOOGLE_DRIVE_AUTH_FOLDER_URL" \
+            --src "$AUTH_CACHE_DIR" \
+            --service-account-json "$DRIVE_SERVICE_ACCOUNT_PATH" \
+            --extensions .json,.pkl
 
       - name: Push Metadata Updates to Google Drive
         if: ${{ github.event.inputs.dry_run != 'true' && env.GOOGLE_DRIVE_METADATA_FOLDER_URL != '' }}
