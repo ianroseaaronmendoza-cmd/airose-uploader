@@ -39,6 +39,7 @@ Add these as repository secrets:
 - `PINTEREST_OAUTH_CREDENTIALS_JSON_B64`
 - `PINTEREST_OAUTH_TOKEN_JSON_B64`
 - `GOOGLE_SERVICE_ACCOUNT_JSON_B64` (required when syncing metadata/video folders from Google Drive)
+- `AUTH_SYNC_GITHUB_TOKEN` (optional token that lets the workflow update the auth-cache GitHub secrets after a successful refresh)
 - `ALERT_WEBHOOK_URL` (optional webhook for YouTube/Pinterest auth failure alerts)
 
 Notes:
@@ -46,6 +47,7 @@ Notes:
 - `YOUTUBE_TOKEN_PKL_B64` must be the full single-line base64 value.
 - The JSON-based secrets can be stored either as the full single-line base64 value or as raw JSON text.
 - `PINTEREST_OAUTH_TOKEN_JSON_B64` should come from `pinterest_oauth_token.json` after a successful local `python refresh_pinterest_token.py` run so it includes the latest `refresh_token`.
+- If `AUTH_SYNC_GITHUB_TOKEN` is set, the workflow updates `YOUTUBE_TOKEN_PKL_B64`, `PINTEREST_CREDENTIALS_JSON_B64`, `PINTEREST_OAUTH_CREDENTIALS_JSON_B64`, and `PINTEREST_OAUTH_TOKEN_JSON_B64` automatically after a successful auth refresh in CI.
 - If `ALERT_WEBHOOK_URL` is set, the workflow sends a JSON webhook when YouTube or Pinterest auth refresh fails.
 - The workflow now refreshes Pinterest non-interactively before upload when Pinterest is selected. If the Pinterest OAuth secrets are missing or the refresh fails, the run removes `pinterest` from the platform list and emits a step summary entry.
 - The workflow also writes auth output to `.runtime/logs/youtube_auth.log` and `.runtime/logs/pinterest_auth.log`, and adds a GitHub Actions step summary entry on failure.
@@ -58,6 +60,13 @@ Recommended for stable scheduled auth:
 - Set repository variable `GOOGLE_DRIVE_AUTH_FOLDER_URL`.
 - With `GOOGLE_DRIVE_AUTH_FOLDER_URL` set, the workflow restores those auth files before refresh checks and pushes updated copies back after each run. That keeps rotating Pinterest tokens and the latest YouTube token file alive across GitHub runners.
 - In that mode, `YOUTUBE_TOKEN_PKL_B64`, `PINTEREST_CREDENTIALS_JSON_B64`, `PINTEREST_OAUTH_CREDENTIALS_JSON_B64`, and `PINTEREST_OAUTH_TOKEN_JSON_B64` become bootstrap fallbacks instead of always-required secrets.
+
+Optional alternative when you do not want to use Google Drive for auth cache:
+
+- Create a repository secret named `AUTH_SYNC_GITHUB_TOKEN`.
+- Use a token that can update Actions repository secrets for this repo.
+- The workflow will push refreshed auth-cache files back into the corresponding GitHub secrets after successful CI refreshes.
+- You still need the initial bootstrap secrets once, and you still need to re-auth locally if Google/Pinterest rejects the saved refresh token entirely.
 
 ## 3. Set GitHub Variables
 
@@ -131,3 +140,4 @@ Source video URL can come from any of:
 - IG/FB system token is used as-is from `meta_credentials.json`.
 - For CI, set `google_service_account_json` in `meta_credentials.json` to `google_service_account.json`.
 - If you want unattended YouTube uploads to keep working long-term, do not leave the Google OAuth consent screen in `Testing`. Google can expire refresh tokens from external apps in testing after 7 days.
+- Automatic secret syncing only keeps successfully refreshed tokens current in GitHub. It cannot recover from a revoked or expired refresh token; that still requires running local OAuth again.

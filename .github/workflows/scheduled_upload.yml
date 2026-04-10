@@ -44,6 +44,7 @@ jobs:
       DRIVE_SERVICE_ACCOUNT_PATH: google_service_account.json
       DEFAULT_PLATFORMS: youtube,igfb,pinterest
       ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      AUTH_SYNC_GITHUB_TOKEN: ${{ secrets.AUTH_SYNC_GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -269,14 +270,14 @@ jobs:
             if [ $CHECK_EXIT -ne 0 ]; then
               YOUTUBE_AUTH_FAILED="true"
               YOUTUBE_AUTH_REASON="refresh_or_channel_check_failed"
-              echo "::error::YouTube auth failed. Refresh token may be expired, revoked, or missing. Update token.pkl / YOUTUBE_TOKEN_PKL_B64."
+              echo "::error::YouTube auth failed. The saved refresh token may be expired, revoked, or missing. Run local YouTube OAuth again. Routine token persistence can be automated via GOOGLE_DRIVE_AUTH_FOLDER_URL or AUTH_SYNC_GITHUB_TOKEN."
               echo "YouTube auth failed; removing youtube from this run."
               {
                 echo "## YouTube Auth Failure"
                 echo
                 echo "- Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
                 echo "- Reason: refresh_or_channel_check_failed"
-                echo "- Action: refresh local YouTube auth and update \`YOUTUBE_TOKEN_PKL_B64\`"
+                echo "- Action: run local YouTube OAuth again, then refresh the stored auth cache (`YOUTUBE_TOKEN_PKL_B64` or Google Drive auth cache)"
                 echo "- Log: \`$YT_AUTH_LOG\`"
               } >> "$GITHUB_STEP_SUMMARY"
               EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'youtube'))" "$EFFECTIVE_PLATFORMS")
@@ -309,14 +310,14 @@ jobs:
               if [ $PIN_REFRESH_EXIT -ne 0 ]; then
                 PINTEREST_AUTH_FAILED="true"
                 PINTEREST_AUTH_REASON="refresh_failed"
-                echo "::error::Pinterest auth refresh failed. Update pinterest_oauth_token.json / PINTEREST_OAUTH_TOKEN_JSON_B64."
+                echo "::error::Pinterest auth refresh failed. Run local Pinterest OAuth again. Routine token persistence can be automated via GOOGLE_DRIVE_AUTH_FOLDER_URL or AUTH_SYNC_GITHUB_TOKEN."
                 echo "Pinterest auth failed; removing pinterest from this run."
                 {
                   echo "## Pinterest Auth Failure"
                   echo
                   echo "- Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
                   echo "- Reason: refresh_failed"
-                  echo "- Action: run local Pinterest OAuth again and update \`PINTEREST_OAUTH_TOKEN_JSON_B64\`"
+                  echo "- Action: run local Pinterest OAuth again, then refresh the stored auth cache (`PINTEREST_OAUTH_TOKEN_JSON_B64` or Google Drive auth cache)"
                   echo "- Log: \`$PIN_AUTH_LOG\`"
                 } >> "$GITHUB_STEP_SUMMARY"
                 EFFECTIVE_PLATFORMS=$(python -c "import sys; print(','.join(item.strip() for item in sys.argv[1].split(',') if item.strip().lower() != 'pinterest'))" "$EFFECTIVE_PLATFORMS")
@@ -339,6 +340,34 @@ jobs:
           echo "PINTEREST_AUTH_LOG=$PIN_AUTH_LOG" >> "$GITHUB_ENV"
           echo "EFFECTIVE_PLATFORMS=$EFFECTIVE_PLATFORMS" >> "$GITHUB_ENV"
           echo "Effective platforms: $EFFECTIVE_PLATFORMS"
+
+      - name: Sync Refreshed Auth Secrets to GitHub
+        if: ${{ env.AUTH_SYNC_GITHUB_TOKEN != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.AUTH_SYNC_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          sync_secret() {
+            local secret_name="$1"
+            local file_path="$2"
+
+            if [ ! -f "$file_path" ]; then
+              echo "Skipping $secret_name; file not found: $file_path"
+              return 0
+            fi
+
+            gh secret set "$secret_name" \
+              --repo "$GITHUB_REPOSITORY" \
+              --app actions \
+              --body "$(base64 -w 0 "$file_path")"
+            echo "Updated $secret_name from $file_path"
+          }
+
+          sync_secret "YOUTUBE_TOKEN_PKL_B64" "token.pkl"
+          sync_secret "PINTEREST_CREDENTIALS_JSON_B64" "pinterest_credentials.json"
+          sync_secret "PINTEREST_OAUTH_CREDENTIALS_JSON_B64" "pinterest_oauth_credentials.json"
+          sync_secret "PINTEREST_OAUTH_TOKEN_JSON_B64" "pinterest_oauth_token.json"
 
       - name: Resolve Scheduled Preset
         shell: bash
@@ -388,7 +417,8 @@ jobs:
           payload = {
               "text": (
                   "YouTube auth failed in scheduled_upload.yml. "
-                  "Refresh local auth and update the YOUTUBE_TOKEN_PKL_B64 GitHub secret."
+                  "Run local YouTube OAuth again. Routine refreshed token persistence "
+                  "can be automated with GOOGLE_DRIVE_AUTH_FOLDER_URL or AUTH_SYNC_GITHUB_TOKEN."
               ),
               "workflow": "Scheduled Upload (Headless)",
               "reason": os.environ.get("YOUTUBE_AUTH_REASON", "unknown"),
@@ -418,7 +448,8 @@ jobs:
           payload = {
               "text": (
                   "Pinterest auth refresh failed in scheduled_upload.yml. "
-                  "Run local Pinterest OAuth again and update the PINTEREST_OAUTH_TOKEN_JSON_B64 GitHub secret."
+                  "Run local Pinterest OAuth again. Routine refreshed token persistence "
+                  "can be automated with GOOGLE_DRIVE_AUTH_FOLDER_URL or AUTH_SYNC_GITHUB_TOKEN."
               ),
               "workflow": "Scheduled Upload (Headless)",
               "reason": os.environ.get("PINTEREST_AUTH_REASON", "unknown"),
