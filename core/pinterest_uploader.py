@@ -17,6 +17,7 @@ from core.meta_uploader import (
     _find_drive_file_id_by_name,
 )
 from core.pinterest_auth import get_pinterest_config
+from refresh_pinterest_token import refresh_saved_pinterest_token_non_interactive
 
 
 PINTEREST_THEME_BOARD_IDS = {
@@ -28,6 +29,21 @@ PINTEREST_THEME_BOARD_IDS = {
 }
 
 _URL_LIKE_PATTERN = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
+_PINTEREST_LINK_FIELDS = (
+    "pinterest_link",
+    "link",
+    "website_url",
+    "canonical_url",
+    "landing_page_url",
+)
+
+
+class PinterestApiError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int, details: Any, stage: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.details = details
+        self.stage = stage
 
 
 def _first_non_empty(*values: Any) -> str:
@@ -94,14 +110,7 @@ def _normalize_pinterest_link(link: str) -> str:
 
 def resolve_pinterest_link(data: dict[str, Any]) -> str:
     return _normalize_pinterest_link(
-        _first_non_empty(
-            data.get("pinterest_link"),
-            data.get("youtube_video_url"),
-            data.get("public_video_url"),
-            data.get("instagram_video_url"),
-            data.get("google_drive_link"),
-            data.get("google_drive_url"),
-        )
+        _first_non_empty(*(data.get(field) for field in _PINTEREST_LINK_FIELDS))
     )
 
 
@@ -385,8 +394,10 @@ def _register_media_upload(config: dict[str, Any]) -> dict[str, Any]:
             details = response.json()
         except ValueError:
             details = response.text
-        raise RuntimeError(
-            f"Pinterest media registration failed (HTTP {response.status_code}): {details}"
+        _raise_pinterest_api_error(
+            stage="media registration",
+            response=response,
+            details=details,
         )
 
     data = response.json()
@@ -441,8 +452,10 @@ def _wait_for_media_ready(
                 details = response.json()
             except ValueError:
                 details = response.text
-            raise RuntimeError(
-                f"Pinterest media status check failed (HTTP {response.status_code}): {details}"
+            _raise_pinterest_api_error(
+                stage="media status check",
+                response=response,
+                details=details,
             )
 
         data = response.json()
@@ -520,11 +533,41 @@ def _extract_pinterest_error_message(details: Any) -> str:
     return str(details).strip()
 
 
+def _raise_pinterest_api_error(*, stage: str, response: requests.Response, details: Any) -> None:
+    raise PinterestApiError(
+        f"Pinterest {stage} failed (HTTP {response.status_code}): {details}",
+        status_code=response.status_code,
+        details=details,
+        stage=stage,
+    )
+
+
 def _is_site_save_block_error(status_code: int, details: Any) -> bool:
     if status_code != 400:
         return False
     message = _extract_pinterest_error_message(details).lower()
     return "doesn't allow you to save pins" in message
+
+
+def _is_pinterest_auth_error(status_code: int, details: Any) -> bool:
+    if status_code == 401:
+        return True
+    if status_code != 403:
+        return False
+
+    message = _extract_pinterest_error_message(details).lower()
+    auth_terms = (
+        "access token",
+        "auth",
+        "authorization",
+        "authentication",
+        "bearer",
+        "expired",
+        "oauth",
+        "token",
+        "unauthorized",
+    )
+    return any(term in message for term in auth_terms)
 
 
 def _build_site_safe_retry_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -545,7 +588,56 @@ def _build_site_safe_retry_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return retry_payload
 
 
-def upload_pinterest_pin_with_details(
+def _build_site_block_runtime_error(
+    *,
+    status_code: int,
+    details: Any,
+    original_payload: dict[str, Any],
+    attempted_payload: dict[str, Any],
+    retried_without_link: bool,
+) -> RuntimeError:
+    host = ""
+    link = str(original_payload.get("link", "")).strip()
+    if link:
+        host = urlparse(link).netloc.lower()
+
+    suffix_parts: list[str] = []
+    if host:
+        suffix_parts.append(f"link_host={host}")
+    elif "link" not in attempted_payload:
+        suffix_parts.append("no_link_sent")
+
+    if retried_without_link:
+        suffix_parts.append("retry_without_link_attempted")
+
+    guidance = ""
+    if suffix_parts:
+        guidance = " [" + ", ".join(suffix_parts) + "]"
+
+    return RuntimeError(
+        "Pinterest blocked the pin with its site-quality check. "
+        "Use a direct landing page in `pinterest_link`, or leave the Pinterest link blank."
+        f"{guidance} (HTTP {status_code}): {details}"
+    )
+
+
+def _refresh_pinterest_token_after_auth_failure(
+    *,
+    stage: str,
+    status_code: int,
+    details: Any,
+) -> None:
+    try:
+        refresh_saved_pinterest_token_non_interactive()
+    except Exception as exc:
+        raise RuntimeError(
+            "Pinterest authentication failed and automatic token refresh also failed. "
+            f"Stage: {stage}. Original API error (HTTP {status_code}): {details}. "
+            f"Refresh error: {exc}"
+        ) from exc
+
+
+def _upload_pinterest_pin_with_details_once(
     title: str,
     description: str = "",
     video_path: str = "",
@@ -580,6 +672,7 @@ def upload_pinterest_pin_with_details(
     last_error: RuntimeError | None = None
     response = None
     payload_used = payload
+    retried_without_link = len(payload_variants) > 1
     for variant_index, candidate_payload in enumerate(payload_variants):
         payload_used = candidate_payload
         for attempt in range(3):
@@ -600,10 +693,22 @@ def upload_pinterest_pin_with_details(
             except ValueError:
                 details = response.text
 
-            last_error = RuntimeError(
-                f"Pinterest pin creation failed (HTTP {response.status_code}): {details}"
-            )
             site_block_error = _is_site_save_block_error(response.status_code, details)
+            if site_block_error:
+                last_error = _build_site_block_runtime_error(
+                    status_code=response.status_code,
+                    details=details,
+                    original_payload=payload,
+                    attempted_payload=candidate_payload,
+                    retried_without_link=retried_without_link,
+                )
+            else:
+                last_error = PinterestApiError(
+                    f"Pinterest pin creation failed (HTTP {response.status_code}): {details}",
+                    status_code=response.status_code,
+                    details=details,
+                    stage="pin creation",
+                )
             if site_block_error and variant_index == 0 and len(payload_variants) > 1:
                 break
 
@@ -628,6 +733,51 @@ def upload_pinterest_pin_with_details(
     if not pin_id:
         raise RuntimeError(f"Pinterest response missing pin id: {data}")
     return str(pin_id), payload_used, str(config["api_base_url"])
+
+
+def upload_pinterest_pin_with_details(
+    title: str,
+    description: str = "",
+    video_path: str = "",
+    media_url: str = "",
+    link: str = "",
+    alt_text: str = "",
+    board_id: str = "",
+    board_section_id: str = "",
+    media_source: dict[str, Any] | None = None,
+    cover_image_key_frame_time: str | int | float | None = None,
+    api_base_url_override: str = "",
+) -> tuple[str, dict[str, Any], str]:
+    for auth_attempt in range(2):
+        try:
+            return _upload_pinterest_pin_with_details_once(
+                title=title,
+                description=description,
+                video_path=video_path,
+                media_url=media_url,
+                link=link,
+                alt_text=alt_text,
+                board_id=board_id,
+                board_section_id=board_section_id,
+                media_source=media_source,
+                cover_image_key_frame_time=cover_image_key_frame_time,
+                api_base_url_override=api_base_url_override,
+            )
+        except PinterestApiError as exc:
+            if not _is_pinterest_auth_error(exc.status_code, exc.details):
+                raise
+            if auth_attempt > 0:
+                raise RuntimeError(
+                    "Pinterest authentication still failed after automatic token refresh. "
+                    f"Stage: {exc.stage}. (HTTP {exc.status_code}): {exc.details}"
+                ) from exc
+            _refresh_pinterest_token_after_auth_failure(
+                stage=exc.stage,
+                status_code=exc.status_code,
+                details=exc.details,
+            )
+
+    raise RuntimeError("Pinterest pin creation failed after automatic auth retry.")
 
 
 def upload_pinterest_pin(

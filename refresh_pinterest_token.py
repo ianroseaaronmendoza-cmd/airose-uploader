@@ -287,6 +287,10 @@ def _refresh_saved_token_non_interactive() -> dict[str, Any]:
     return merged_token_data
 
 
+def refresh_saved_pinterest_token_non_interactive() -> dict[str, Any]:
+    return _refresh_saved_token_non_interactive()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Refresh Pinterest credentials interactively or via a saved refresh token."
@@ -300,7 +304,7 @@ def main() -> int:
 
     try:
         if args.no_interactive:
-            token_data = _refresh_saved_token_non_interactive()
+            token_data = refresh_saved_pinterest_token_non_interactive()
             print("Pinterest token refresh successful.")
         else:
             creds = _load_oauth_creds()
